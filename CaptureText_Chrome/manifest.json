@@ -29,7 +29,8 @@
     "scripting",
     "storage",
     "tabs",
-    "clipboardWrite"
+    "clipboardWrite",
+    "system.display"
   ],
   "host_permissions": ["<all_urls>"]
 }

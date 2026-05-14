@@ -16,13 +16,21 @@ chrome.action.onClicked.addListener(async (tab) => {
     } catch { /* window was closed, fall through to create */ }
   }
 
+  // screen is not available in service workers — get display info via API
+  let leftPos = 1490; // safe default for 1920-wide screens
+  try {
+    const displays = await chrome.system.display.getInfo();
+    const primary  = displays.find(d => d.isPrimary) || displays[0];
+    if (primary) leftPos = Math.max(0, primary.workArea.width - 430);
+  } catch { /* system.display not available or no display info */ }
+
   const win = await chrome.windows.create({
     url:    chrome.runtime.getURL('popup/popup.html'),
     type:   'popup',
     width:  400,
     height: 650,
     top:    60,
-    left:   Math.max(0, (screen.availWidth || 1920) - 430),
+    left:   leftPos,
     focused: true,
   });
   await chrome.storage.session.set({ gct_popup_win: win.id });
