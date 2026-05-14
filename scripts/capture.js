@@ -3,9 +3,6 @@
 
   if (window.__GPTCapture) window.__GPTCapture.destroy();
 
-  // ── localStorage 批量模式鍵值 ────────────────────────────────────────────────
-  const BATCH_KEY = '__GPTCapture_batch';
-
   // ── 可調整設定（⚙ 面板即時修改）──────────────────────────────────────────────
   const CFG = {
     // 捕獲目標
@@ -19,13 +16,13 @@
     // 自動化
     autoCapture: true,          // 掃描完成後自動捕獲
     autoExport:  true,          // 捕獲完成後自動匯出
-    autoExportFormat: 'txt',    // txt | html | xls | clipboard
+    autoExportFormat: 'xls',    // txt | html | xls | clipboard
     defaultSelection: 'assistant',  // user | assistant | all | none
     // 顯示
     showIndex: true,
     // XLS
     xlsDelimiter:     '|',
-    xlsCleanupTargets: ['標題：'],  // 包含此字串的儲存格將被移除
+    xlsCleanupTargets: ['標題：'],  // 儲存格包含此字串時，從儲存格內容中刪除該字串
   };
 
   // ── 執行狀態 ─────────────────────────────────────────────────────────────────
@@ -33,11 +30,6 @@
     messages: [],
     capturedData: null,
     stopScan: false,
-    // 批量
-    batchQueue:   [],
-    batchResults: [],
-    batchActive:  false,
-    batchTotal:   0,
   };
 
   // ── 樣式 ──────────────────────────────────────────────────────────────────────
@@ -103,11 +95,6 @@
     }
     .gcp-check input { accent-color:#10a37f; cursor:pointer; }
     .gcp-hint { font-size:10px; color:#555; margin-top:3px; line-height:1.4; }
-    /* ── 批量面板 ── */
-    #gcp-batch-body {
-      padding:10px 14px; border-bottom:1px solid #2a2a2a;
-      background:#161616; flex-shrink:0;
-    }
     /* ── 通用 section ── */
     .gcp-section { padding:9px 14px; border-bottom:1px solid #2a2a2a; flex-shrink:0; }
     .gcp-row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
@@ -162,7 +149,6 @@
       <div class="gcp-header">
         <span class="gcp-header-title">📋 GPT 文字捕獲工具</span>
         <div class="gcp-header-actions">
-          <button class="gcp-icon-btn" id="gcp-batch-toggle" title="批量掃描">🔗</button>
           <button class="gcp-icon-btn" id="gcp-cfg-btn" title="設定">⚙</button>
           <button class="gcp-close" id="gcp-x">×</button>
         </div>
@@ -206,9 +192,9 @@
         <div class="gcp-field" style="padding-left:18px">
           <label class="gcp-label">自動匯出格式</label>
           <select class="gcp-select" id="gcp-cfg-expfmt">
+            <option value="xls"       ${CFG.autoExportFormat==='xls'      ?'selected':''}>Excel (XLS)</option>
             <option value="txt"       ${CFG.autoExportFormat==='txt'      ?'selected':''}>TXT</option>
             <option value="html"      ${CFG.autoExportFormat==='html'     ?'selected':''}>HTML</option>
-            <option value="xls"       ${CFG.autoExportFormat==='xls'      ?'selected':''}>Excel (XLS)</option>
             <option value="clipboard" ${CFG.autoExportFormat==='clipboard'?'selected':''}>剪貼簿</option>
           </select>
         </div>
@@ -236,29 +222,13 @@
         <div class="gcp-field">
           <label class="gcp-label">清除目標（逗號分隔）</label>
           <input class="gcp-input" id="gcp-cfg-cleanup" value="${CFG.xlsCleanupTargets.join(', ')}" placeholder="標題：">
-          <div class="gcp-hint">儲存格包含任一目標字串時，該儲存格將被移除</div>
+          <div class="gcp-hint">儲存格含目標字串時，將從儲存格內容中刪除該字串（保留儲存格，若刪除後為空則移除）</div>
         </div>
 
         <div class="gcp-row" style="margin-top:8px">
           <button class="gcp-btn gcp-btn-primary" id="gcp-cfg-apply">套用設定</button>
           <span class="gcp-status" id="gcp-cfg-status"></span>
         </div>
-      </div>
-
-      <!-- 🔗 批量掃描面板 -->
-      <div id="gcp-batch-body" style="display:none">
-        <div class="gcp-hint" style="margin-bottom:6px;font-size:11px;color:#888">
-          每行一個網址。掃描完當前頁後自動跳轉下一頁（同分頁），重新貼上腳本後自動繼續。
-        </div>
-        <textarea id="gcp-batch-urls" class="gcp-input" rows="4"
-          style="resize:vertical;font-size:11px;line-height:1.5"
-          placeholder="https://chatgpt.com/share/...&#10;https://chatgpt.com/share/..."></textarea>
-        <div class="gcp-row" style="margin-top:6px">
-          <button class="gcp-btn gcp-btn-primary" id="gcp-batch-start">▶ 開始批量</button>
-          <button class="gcp-btn gcp-btn-secondary" id="gcp-batch-export-all">⬇ 匯出全部結果</button>
-          <button class="gcp-btn gcp-btn-danger" id="gcp-batch-clear">✕ 清除</button>
-        </div>
-        <div class="gcp-status" id="gcp-batch-status"></div>
       </div>
 
       <!-- 步驟 1：掃描 -->
@@ -533,9 +503,13 @@
 
       // 分割欄位
       let parts = m.text.split(delim).map(p => p.trim()).filter(p => p.length > 0);
-      // 清除含目標字串的儲存格
+      // 從儲存格內容中刪除目標字串（保留儲存格，僅移除匹配的文字）
       if (cleanTargets.length > 0) {
-        parts = parts.filter(p => !cleanTargets.some(t => t && p.includes(t)));
+        parts = parts.map(p => {
+          let result = p;
+          cleanTargets.forEach(t => { if (t) result = result.split(t).join(''); });
+          return result.trim();
+        }).filter(p => p.length > 0); // 若刪除後儲存格為空則移除
       }
       const dataCells = parts.map(p => `<td>${escHtml(p)}</td>`).join('');
       return `  <tr>${idxCell}${roleCell}${dataCells}</tr>`;
@@ -575,82 +549,11 @@ ${dataRows}
         catch { fallbackCopy(formatTxt(STATE.capturedData)); }
         break;
     }
-    // 批量：匯出後跳轉下一頁
-    if (STATE.batchActive) await advanceBatch();
   }
 
   function fallbackCopy(txt) {
     const ta = Object.assign(document.createElement('textarea'), { value: txt, style: 'position:fixed;opacity:0;' });
     document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-  }
-
-  // ── 批量模式 ─────────────────────────────────────────────────────────────────
-  function saveBatchState() {
-    try {
-      localStorage.setItem(BATCH_KEY, JSON.stringify({
-        queue:   STATE.batchQueue,
-        results: STATE.batchResults.map(r => ({ url: r.url, title: r.title, txt: formatTxt(r.messages) })),
-        total:   STATE.batchTotal,
-      }));
-    } catch(e) { console.warn('[GPTCapture] batch save failed', e); }
-  }
-
-  function loadBatchState() {
-    try { const r = localStorage.getItem(BATCH_KEY); return r ? JSON.parse(r) : null; }
-    catch { return null; }
-  }
-
-  function urlsMatch(a, b) {
-    try {
-      const ua = new URL(a), ub = new URL(b);
-      return ua.hostname === ub.hostname &&
-             ua.pathname.replace(/\/$/,'') === ub.pathname.replace(/\/$/,'');
-    } catch { return a === b; }
-  }
-
-  async function advanceBatch() {
-    const batchStatus = document.getElementById('gcp-batch-status');
-    // 儲存當前頁結果
-    if (STATE.capturedData) {
-      STATE.batchResults.push({ url: location.href, title: document.title, messages: STATE.capturedData });
-    }
-    if (STATE.batchQueue.length > 0) {
-      const nextUrl = STATE.batchQueue.shift();
-      saveBatchState();
-      setStatus(batchStatus, `✔ 第 ${STATE.batchResults.length}/${STATE.batchTotal} 頁完成，正在跳轉…`, 'warn');
-      await sleep(1500);
-      location.href = nextUrl;
-    } else {
-      // 全部完成
-      try { localStorage.removeItem(BATCH_KEY); } catch {}
-      STATE.batchActive = false;
-      setStatus(batchStatus, `✅ 批量完成！共 ${STATE.batchResults.length} 頁，點擊「匯出全部結果」`, 'ok');
-    }
-  }
-
-  function checkBatchResume() {
-    const state = loadBatchState();
-    if (!state) return;
-    const expected = state.queue[0];
-    if (!expected || !urlsMatch(location.href, expected)) return; // 網址不符，不繼續
-
-    STATE.batchQueue   = state.queue.slice(1);
-    STATE.batchResults = state.results || [];
-    STATE.batchActive  = true;
-    STATE.batchTotal   = state.total;
-
-    const done = STATE.batchTotal - STATE.batchQueue.length - 1;
-    const batchStatus = document.getElementById('gcp-batch-status');
-    if (batchStatus) setStatus(batchStatus, `批量模式：第 ${done + 1}/${STATE.batchTotal} 頁，自動掃描中…`, 'warn');
-
-    // 展開批量面板
-    const body = document.getElementById('gcp-batch-body');
-    const btn  = document.getElementById('gcp-batch-toggle');
-    if (body) body.style.display = 'block';
-    if (btn)  btn.classList.add('active');
-
-    // 自動開始掃描
-    setTimeout(() => document.getElementById('gcp-scan')?.click(), 600);
   }
 
   // ── 主邏輯 ────────────────────────────────────────────────────────────────────
@@ -711,58 +614,6 @@ ${dataRows}
         updateListHeight();
         scanInfo.textContent = '尚未掃描'; scanInfo.style.color = '#555';
         refreshCount();
-      });
-
-      // ── 🔗 批量 ──
-      document.getElementById('gcp-batch-toggle').addEventListener('click', () => {
-        const body = document.getElementById('gcp-batch-body');
-        const btn  = document.getElementById('gcp-batch-toggle');
-        const open = body.style.display === 'none';
-        body.style.display = open ? 'block' : 'none';
-        btn.classList.toggle('active', open);
-      });
-
-      document.getElementById('gcp-batch-start').addEventListener('click', async () => {
-        const batchStatus = document.getElementById('gcp-batch-status');
-        const rawUrls = document.getElementById('gcp-batch-urls').value.trim();
-        const urls = rawUrls.split('\n').map(u=>u.trim()).filter(u=>u.startsWith('http'));
-        if (urls.length === 0) { setStatus(batchStatus,'⚠ 請輸入至少一個網址','err'); return; }
-
-        STATE.batchResults = [];
-        STATE.batchTotal   = urls.length;
-        STATE.batchActive  = true;
-        STATE.batchQueue   = urls.slice(1);  // 第一筆即當前頁
-
-        // 若第一個 URL 不是當前頁，先儲存並跳轉
-        if (!urlsMatch(location.href, urls[0])) {
-          STATE.batchQueue = urls.slice(1);
-          saveBatchState();
-          setStatus(batchStatus, `跳轉至第 1/${urls.length} 頁…`, 'warn');
-          await sleep(800);
-          location.href = urls[0];
-          return;
-        }
-        setStatus(batchStatus, `批量模式：第 1/${urls.length} 頁，自動掃描中…`, 'warn');
-        saveBatchState();
-        scanBtn.click();
-      });
-
-      document.getElementById('gcp-batch-export-all').addEventListener('click', () => {
-        const batchStatus = document.getElementById('gcp-batch-status');
-        if (STATE.batchResults.length === 0) {
-          setStatus(batchStatus,'⚠ 尚無批量結果','err'); return;
-        }
-        const combined = STATE.batchResults.map(r =>
-          `====== ${r.title} ======\n網址：${r.url}\n${r.txt || ''}`
-        ).join('\n\n' + '═'.repeat(50) + '\n\n');
-        download(combined, `batch_${timestamp()}.txt`, 'text/plain;charset=utf-8');
-        setStatus(batchStatus,`✔ 已匯出 ${STATE.batchResults.length} 頁合併結果`,'ok');
-      });
-
-      document.getElementById('gcp-batch-clear').addEventListener('click', () => {
-        try { localStorage.removeItem(BATCH_KEY); } catch {}
-        STATE.batchQueue = []; STATE.batchResults = []; STATE.batchActive = false;
-        setStatus(document.getElementById('gcp-batch-status'),'已清除批量狀態','ok');
       });
 
       // ── 關閉 ──
@@ -881,9 +732,6 @@ ${dataRows}
 
       // 初始化清單高度
       updateListHeight();
-
-      // 批量模式斷點續傳偵測
-      checkBatchResume();
 
     } catch (err) {
       console.error('[GPTCapture] 初始化失敗:', err);
