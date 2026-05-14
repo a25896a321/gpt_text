@@ -6,7 +6,7 @@ window.__GCT_injected = true;
 const CFG_DEFAULT = {
   selector:         '[data-message-author-role]',
   roleAttr:         'data-message-author-role',
-  targetRoles:      ['user', 'assistant'],
+  targetRoles:      ['assistant', 'user'],
   scrollDelay:      600,
   showIndex:        true,
   defaultSelection: 'assistant', // 'all' | <roleName> | 'none'

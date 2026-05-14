@@ -4,9 +4,9 @@
 const CFG_DEFAULTS = {
   selector:         '[data-message-author-role]',
   roleAttr:         'data-message-author-role',
-  targetRoles:      'user,assistant',
+  targetRoles:      'assistant,user',
   scrollDelay:      600,
-  defaultSelection: 'assistant',
+  defaultSelection: 'assistant',  // index 0 of targetRoles
   exportFormat:     'xls',
   exportFilename:   '',
   xlsDelim:         '|',
