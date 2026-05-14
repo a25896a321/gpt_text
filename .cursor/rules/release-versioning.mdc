@@ -1,0 +1,79 @@
+---
+description: PR 合併後的版本管理與 GitHub 發布規範
+alwaysApply: true
+---
+
+# 版本管理規範
+
+## 語意化版本（Semantic Versioning）
+
+格式：`v{MAJOR}.{MINOR}.{PATCH}`
+
+| 類型 | 版本遞增 | 範例 |
+|------|---------|------|
+| 重大功能或破壞性變更 | MAJOR | v1.0.0 → v2.0.0 |
+| 新增功能（向後相容） | MINOR | v1.0.0 → v1.1.0 |
+| Bug 修正、小幅調整 | PATCH | v1.0.0 → v1.0.1 |
+
+## PR 合併後的必做步驟
+
+每次 PR 合併（或完成一批修改）後，**必須依序執行**：
+
+### 1. 更新 `VERSION` 檔案
+
+```
+echo "v1.x.x" > VERSION
+```
+
+### 2. 更新 `CHANGELOG.md`
+
+在最頂端新增一個版本區塊：
+
+```markdown
+## v1.x.x — YYYY-MM-DD
+
+### 新增
+- ...
+
+### 修正
+- ...
+
+### 變更
+- ...
+```
+
+### 3. Commit 版本資訊
+
+```bash
+git add VERSION CHANGELOG.md
+git commit -m "chore: release v1.x.x"
+```
+
+### 4. 建立並推送 Git Tag
+
+```bash
+git tag v1.x.x
+git push origin main
+git push origin v1.x.x
+```
+
+## GitHub Release（選擇性）
+
+每個 MINOR 以上版本建議在 GitHub 建立 Release：
+
+```bash
+gh release create v1.x.x \
+  --title "v1.x.x — 功能說明" \
+  --notes "$(cat CHANGELOG.md | head -20)"
+```
+
+## 初始版本
+
+- 首次 push 使用 `v0.1.0`
+- 第一個穩定可用版本升為 `v1.0.0`
+
+## 注意事項
+
+- Tag 一旦推送至遠端**不可強制覆蓋**（禁止 `git push --force` tag）
+- `main` 分支為保護分支，所有修改透過 PR 合併
+- SSH 遠端：`git@github.com:a25896a321/gpt_text.git`

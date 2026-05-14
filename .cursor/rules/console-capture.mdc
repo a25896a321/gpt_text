@@ -1,0 +1,74 @@
+---
+description: F12 Console 腳本開發規範，針對 scripts/**/*.js
+globs: scripts/**/*.js
+alwaysApply: false
+---
+
+# Console 腳本規範
+
+## 結構要求
+
+- 單檔 IIFE：`(function() { ... })();`
+- 重複執行守衛：若 `window.__GPTCapture` 已存在，先呼叫 `destroy()` 再重新初始化
+- 所有 `async` 函式需包 `try/catch`，錯誤顯示在面板內（非 `console.error`）
+- 不使用 `import / require`，不依賴 CDN 動態載入（確保離線可用）
+
+## 訊息掃描
+
+```javascript
+// 標準選取器
+document.querySelectorAll('[data-message-author-role]')
+
+// 每個節點記錄
+{ index, role, preview: innerText.slice(0,60), node, selected: true }
+```
+
+- 掃描前必須先執行 `scrollToBottom()`，確保懶加載節點已渲染
+- 結果依 DOM 順序（對話時序）排列
+
+## 滾動展開策略
+
+```javascript
+// scrollHeight 連續 3 次不再增長才算穩定
+// 每輪等待 800ms，超過 60 秒顯示警告
+while (stable < 3) {
+  window.scrollTo(0, document.body.scrollHeight);
+  await sleep(800);
+  // 比對高度 ...
+}
+```
+
+## 選取器 UI 規則
+
+- 固定右側，`z-index: 999999`，不遮蓋正文
+- 每筆訊息顯示：`[角色徽章] #序號 preview… ☑`
+- 快捷按鈕：全選 User、全選 Assistant、全選、清除
+- 即時顯示「已選 N 筆」統計
+- 捕獲與匯出分離：先「捕獲選取項目」再選匯出格式，可多次重複匯出
+
+## TXT 格式
+
+```
+=== GPT 對話捕獲 ===
+網址：{url}
+時間：{datetime}
+捕獲訊息：{N} 筆
+========================================
+
+[User] #1
+{text}
+────────────────────────────────────────
+
+[ChatGPT] #2
+{text}
+────────────────────────────────────────
+```
+
+## 錯誤提示標準
+
+| 情況 | 面板提示 |
+|------|---------|
+| 掃描到 0 筆 | 「未找到訊息，請確認頁面已完整載入」 |
+| 滾動逾時 60s | 「⚠ 頁面仍在載入，建議稍後重試」 |
+| 未捕獲就匯出 | 「⚠ 請先點擊『捕獲選取項目』」 |
+| 未勾選就捕獲 | 「⚠ 請先勾選至少一筆訊息」 |

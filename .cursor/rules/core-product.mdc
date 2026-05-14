@@ -1,0 +1,47 @@
+---
+description: 產品核心目標與資料模型，所有對話均適用
+alwaysApply: true
+---
+
+# 產品目標
+
+解決 React / 動態渲染頁面（如 ChatGPT 分享頁）無法 Ctrl+A 一次全選的問題，
+讓使用者可在 F12 Console 貼入腳本後，精準選取並匯出對話文字。
+
+# 執行環境
+
+- **Method 1（主力）**：F12 Console 單檔腳本，無需安裝任何套件
+- **Method 2（擴充）**：Chrome Extension，由使用者另行安排
+- 本專案不包含 Node.js、Python 或後端服務
+
+# 捕獲目標
+
+```
+data-message-author-role="user"      → 使用者訊息
+data-message-author-role="assistant" → ChatGPT 回覆
+```
+
+# 資料模型
+
+```typescript
+interface Message {
+  index: number;       // DOM 順序（1-based）
+  role: 'user' | 'assistant';
+  preview: string;     // 前 60 字，供面板顯示
+  text: string;        // 完整 innerText（捕獲後才填入）
+  selected: boolean;
+  node: Element;       // DOM 節點參照
+}
+```
+
+# 匯出格式
+
+- **TXT**（主要）：含標頭（網址、時間、筆數）+ 逐條角色標籤 + 分隔線
+- **HTML**：含 `<meta charset="utf-8">` 的完整文件
+- **剪貼簿**：TXT 格式，`navigator.clipboard.writeText` 優先，降級 `execCommand`
+
+# 規範
+
+- UI 文案使用**繁體中文**
+- 腳本為單一 `.js` 檔，IIFE 包裝，僅暴露 `window.__GPTCapture`
+- 禁止：未經使用者勾選就全頁捕獲、自動跳轉、繞過登入/付費牆
