@@ -27,6 +27,11 @@ body {
   line-height: 1.5;
   padding-bottom: 28px; /* space for footer */
 }
+/* Pinned (always-on-top) window uses a larger fixed size */
+body.pinned {
+  width: 460px;
+  font-size: 14px;
+}
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 .hdr {

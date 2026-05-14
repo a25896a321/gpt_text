@@ -465,44 +465,66 @@ $('btn-reset-cfg').addEventListener('click', async () => {
 async function init() {
   await loadSettings();
 
-  // ── Show / hide pin indicator ──────────────────────────────────────────────
-  const pinEl = $('pin-indicator');
-  if (pinEl) pinEl.classList.toggle('hidden', !IS_PINNED);
-
   // ── Auto-popout if alwaysOnTop is on and we're in the normal popup ─────────
-  // IS_PINNED = false means we're the standard default_popup.
-  // IS_PINNED = true  means we're already the persistent window — skip.
+  // IS_PINNED = false  →  standard default_popup; check / create persistent window.
+  // IS_PINNED = true   →  already the persistent window; skip.
   if (cfg.alwaysOnTop && !IS_PINNED) {
-    // Capture the active tab BEFORE we close this popup
+    // ① Capture the active tab before this popup closes
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab) await chrome.storage.session.set({ gct_target_tab: tab.id });
     } catch {}
-    // Open a persistent popup window (screen is available here in popup context)
+
+    // ② Singleton: re-focus the existing pinned window if still open
+    const stored = await chrome.storage.session.get('gct_popup_win').catch(() => ({}));
+    if (stored.gct_popup_win) {
+      try {
+        await chrome.windows.update(stored.gct_popup_win, { focused: true, drawAttention: true });
+        window.close();
+        return;            // existing window found and focused → done
+      } catch {
+        // window was closed externally; fall through to create a new one
+      }
+    }
+
+    // ③ Create a new persistent popup (screen is available here in popup context)
     try {
-      await chrome.windows.create({
+      const win = await chrome.windows.create({
         url:     chrome.runtime.getURL('popup/popup.html?pin=1'),
         type:    'popup',
-        width:   400,
-        height:  670,
-        top:     60,
-        left:    Math.max(0, screen.availWidth - 430),
+        width:   500,
+        height:  820,
+        top:     40,
+        left:    Math.max(0, screen.availWidth - 520),
         focused: true,
       });
+      await chrome.storage.session.set({ gct_popup_win: win.id });
     } catch {}
     window.close();
     return;
+  }
+
+  // ── Pinned window: apply larger body, show 📌, hide close btn ─────────────
+  if (IS_PINNED) {
+    document.body.classList.add('pinned');
+    const pinEl  = $('pin-indicator');
+    const closeEl = $('btn-close-panel');
+    if (pinEl)   pinEl.classList.remove('hidden');
+    if (closeEl) closeEl.style.display = 'none';
+
+    // Clean up singleton record when this window is closed
+    window.addEventListener('beforeunload', () => {
+      chrome.storage.session.remove('gct_popup_win').catch(() => {});
+    });
   }
 
   // ── Resolve target tab ─────────────────────────────────────────────────────
   try {
     let tab;
     if (IS_PINNED) {
-      // We were opened by the popout logic — use the stored tab ID
-      const stored = await chrome.storage.session.get('gct_target_tab');
-      if (stored.gct_target_tab) tab = await chrome.tabs.get(stored.gct_target_tab);
+      const s = await chrome.storage.session.get('gct_target_tab');
+      if (s.gct_target_tab) tab = await chrome.tabs.get(s.gct_target_tab);
     } else {
-      // Standard popup: currentWindow correctly refers to the browser window
       const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
       tab = t;
     }
