@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <title>文字捕獲工具</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────────────── -->
+<header class="hdr">
+  <img src="../icons/CaptureText_icon.png" class="hdr-icon" alt="">
+  <span class="hdr-title">文字捕獲工具</span>
+  <span class="hdr-ver">v1.0.0</span>
+</header>
+
+<!-- ── Tab buttons ────────────────────────────────────────────────────────── -->
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="scan">🔍 掃描</button>
+  <button class="tab-btn"        data-tab="batch">🔗 批量</button>
+  <button class="tab-btn"        data-tab="settings">⚙ 設定</button>
+</nav>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     TAB: 掃描
+     ══════════════════════════════════════════════════════════════════════════ -->
+<section id="tab-scan" class="tab-panel active">
+
+  <!-- Current page info -->
+  <div class="page-info">
+    <span id="page-title" class="page-title" title="">正在讀取頁面…</span>
+  </div>
+
+  <!-- Scan controls -->
+  <div class="row gap-6">
+    <button id="btn-scan"      class="btn btn-primary flex-1">🔍 掃描</button>
+    <button id="btn-stop-scan" class="btn btn-danger"  disabled>⏹ 停止</button>
+    <button id="btn-sidebar"   class="btn btn-ghost"   disabled title="開啟 / 關閉側邊閱讀模式">📖</button>
+  </div>
+
+  <!-- Progress bar -->
+  <div id="scan-progress-wrap" class="progress-wrap hidden">
+    <div id="scan-progress-bar" class="progress-bar" style="width:0%"></div>
+  </div>
+  <div id="scan-status" class="status-line">尚未掃描</div>
+
+  <!-- Quick-select shortcuts -->
+  <div class="row gap-4 mt-4">
+    <button class="btn btn-xs btn-blue"  id="qs-user">僅選 User</button>
+    <button class="btn btn-xs btn-green" id="qs-asst">僅選 Assistant</button>
+    <button class="btn btn-xs btn-ghost" id="qs-all">全選</button>
+    <button class="btn btn-xs btn-ghost" id="qs-none">清除</button>
+  </div>
+
+  <!-- Message list -->
+  <div id="msg-list" class="msg-list hidden"></div>
+  <div id="msg-empty" class="empty-hint">請先點擊「掃描」</div>
+
+  <!-- Selection summary + confirm -->
+  <div id="capture-bar" class="capture-bar hidden">
+    <span id="sel-count">已選 0 筆</span>
+    <button id="btn-capture" class="btn btn-primary btn-sm">⚡ 確認選取</button>
+  </div>
+
+  <!-- Export row -->
+  <div id="export-row" class="export-row hidden">
+    <span class="export-label">匯出：</span>
+    <button class="btn btn-xs btn-export" data-fmt="txt">TXT</button>
+    <button class="btn btn-xs btn-export" data-fmt="html">HTML</button>
+    <button class="btn btn-xs btn-export" data-fmt="xls">XLS</button>
+    <button class="btn btn-xs btn-export" data-fmt="clipboard">📋</button>
+    <button id="btn-sidebar-bottom" class="btn btn-xs btn-ghost">📖 閱讀</button>
+  </div>
+
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     TAB: 批量
+     ══════════════════════════════════════════════════════════════════════════ -->
+<section id="tab-batch" class="tab-panel hidden">
+
+  <label class="lbl">URL 清單（每行一筆）</label>
+  <textarea id="batch-urls" class="textarea" rows="7" placeholder="https://chatgpt.com/share/abc123&#10;https://chatgpt.com/share/def456&#10;..."></textarea>
+
+  <div class="row gap-6 mt-6">
+    <button id="btn-batch-start"  class="btn btn-primary flex-1">▶ 開始批量</button>
+    <button id="btn-batch-cancel" class="btn btn-danger hidden">✕ 取消</button>
+  </div>
+
+  <!-- Batch progress -->
+  <div id="batch-progress-wrap" class="progress-wrap hidden">
+    <div id="batch-progress-bar" class="progress-bar" style="width:0%"></div>
+  </div>
+  <div id="batch-status" class="status-line mt-4">尚未執行</div>
+
+  <div class="hint-box mt-6">
+    <strong>批量流程：</strong><br>
+    ① 輸入 URL 清單 → ② 點「開始批量」→ 每頁自動掃描 + 匯出檔案 → 自動跳至下一頁
+  </div>
+
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     TAB: 設定
+     ══════════════════════════════════════════════════════════════════════════ -->
+<section id="tab-settings" class="tab-panel hidden">
+
+  <div class="field">
+    <label class="lbl">CSS 選擇器</label>
+    <input id="cfg-selector" class="input" type="text" value="[data-message-author-role]">
+  </div>
+  <div class="field">
+    <label class="lbl">角色屬性名稱</label>
+    <input id="cfg-roleAttr" class="input" type="text" value="data-message-author-role">
+  </div>
+  <div class="field">
+    <label class="lbl">目標角色（逗號分隔）</label>
+    <input id="cfg-targetRoles" class="input" type="text" value="user,assistant">
+  </div>
+  <div class="field">
+    <label class="lbl">捲動延遲（ms）</label>
+    <input id="cfg-scrollDelay" class="input" type="number" min="200" max="3000" step="100" value="600">
+  </div>
+  <div class="field">
+    <label class="lbl">預設選取</label>
+    <select id="cfg-defaultSelection" class="select">
+      <option value="assistant">僅 Assistant</option>
+      <option value="user">僅 User</option>
+      <option value="all">全部</option>
+      <option value="none">不選取</option>
+    </select>
+  </div>
+  <div class="field">
+    <label class="lbl">自動匯出格式</label>
+    <select id="cfg-exportFormat" class="select">
+      <option value="xls">Excel (XLS)</option>
+      <option value="txt">純文字 (TXT)</option>
+      <option value="html">網頁 (HTML)</option>
+      <option value="clipboard">剪貼簿</option>
+    </select>
+  </div>
+  <div class="field">
+    <label class="lbl">自訂檔名（空白=頁面標題）</label>
+    <input id="cfg-exportFilename" class="input" type="text" placeholder="留空使用頁面標題">
+  </div>
+  <div class="field">
+    <label class="lbl">XLS 欄位分隔符</label>
+    <input id="cfg-xlsDelim" class="input" type="text" value="|" maxlength="5">
+  </div>
+  <div class="field">
+    <label class="lbl">XLS 清除目標（逗號分隔）<br><small>從儲存格內容中移除指定字串</small></label>
+    <input id="cfg-xlsCleanTargets" class="input" type="text" value="標題：">
+  </div>
+  <div class="field row gap-8">
+    <label class="lbl">顯示序號</label>
+    <input id="cfg-showIndex" type="checkbox" checked>
+  </div>
+
+  <div class="row mt-8 gap-6">
+    <button id="btn-save-cfg"   class="btn btn-primary flex-1">💾 儲存設定</button>
+    <button id="btn-reset-cfg"  class="btn btn-ghost">重置</button>
+  </div>
+
+</section>
+
+<!-- ── Footer status bar ──────────────────────────────────────────────────── -->
+<footer id="footer-bar" class="footer-bar">就緒</footer>
+
+<script src="popup.js"></script>
+</body>
+</html>

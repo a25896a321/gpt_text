@@ -4,6 +4,25 @@
 
 ---
 
+## v0.6.0 — 2026-05-15
+
+### 新增
+- **CaptureText_Chrome/** — 全新 Chrome 擴充元件（Manifest V3），以 `scripts/capture.js` 為基礎架構，`scripts/capture.js` 本身不變更
+- `manifest.json`：擴充元件名稱「文字捕獲工具」，圖示使用 `icons/CaptureText_icon.png`
+- `background/service_worker.js`：批量狀態管理、tab 導航協調、`chrome.storage.session` 分 tab 狀態儲存
+- `content/content.js`：完整掃描核心（scrollAndScan、findScrollContainer）、TXT / HTML / XLS / 剪貼簿匯出、側邊閱讀模式（buildSidebar）、全事件監聽
+- `content/content.css`：側邊閱讀面板樣式，含進場動畫、搜尋高亮、User / GPT 色彩區分
+- `popup/popup.html`：三分頁 UI（🔍 掃描 / 🔗 批量 / ⚙ 設定）
+- `popup/popup.js`：掃描控制、訊息列表選取、確認捕獲、匯出按鈕、側邊欄切換、批量啟動 / 監控、設定儲存（`chrome.storage.sync`）
+- `popup/popup.css`：深色主題，寬 380 px，完整按鈕 / 表單 / 進度條樣式
+
+### 功能說明
+1. **批量 URL 自動掃描**：同分頁逐頁導向 + `localStorage` 斷點續傳；輸入 URL 清單後一鍵啟動，每頁自動掃描、捕獲、匯出後自動跳至下一頁
+2. **側邊閱讀模式**：點擊 📖 在頁面右側展開 380 px 閱讀面板，支援即時搜尋 / 關鍵字高亮、字體大小調整、頁面內容同步左移
+3. **UI/UX 優化**：快捷選取按鈕（僅選 User / Assistant / 全選 / 清除）、掃描進度條、上次掃描狀態恢復、批量進度輪詢、底部狀態列即時提示
+
+---
+
 ## v0.5.0 — 2026-05-15
 
 ### 修正
