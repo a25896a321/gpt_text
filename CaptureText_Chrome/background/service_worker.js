@@ -1,18 +1,38 @@
 'use strict';
 
-// ── Extension icon click → toggle floating panel ──────────────────────────────
+// ── Extension icon click → open / focus persistent popup window ───────────────
 chrome.action.onClicked.addListener(async (tab) => {
-  try {
-    await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_PANEL' });
-  } catch {
-    // Content script not yet active on this page — inject first
+  // Remember which tab was active so popup.js can communicate with it
+  await chrome.storage.session.set({ gct_target_tab: tab.id });
+
+  // Re-use existing popup window if still open
+  const stored = await chrome.storage.session.get('gct_popup_win');
+  if (stored.gct_popup_win) {
     try {
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/content.js'] });
-      await chrome.scripting.insertCSS(   { target: { tabId: tab.id }, files: ['content/content.css'] });
-      setTimeout(async () => {
-        try { await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_PANEL' }); } catch {}
-      }, 400);
-    } catch {}
+      await chrome.windows.update(stored.gct_popup_win, { focused: true, drawAttention: true });
+      // Also refresh the target tab so popup reflects current page
+      await chrome.runtime.sendMessage({ type: '_REFRESH_TARGET' }).catch(() => {});
+      return;
+    } catch { /* window was closed, fall through to create */ }
+  }
+
+  const win = await chrome.windows.create({
+    url:    chrome.runtime.getURL('popup/popup.html'),
+    type:   'popup',
+    width:  400,
+    height: 650,
+    top:    60,
+    left:   Math.max(0, (screen.availWidth || 1920) - 430),
+    focused: true,
+  });
+  await chrome.storage.session.set({ gct_popup_win: win.id });
+});
+
+// ── Clean up stored window ID when the popup window is closed ─────────────────
+chrome.windows.onRemoved.addListener(async (windowId) => {
+  const stored = await chrome.storage.session.get('gct_popup_win');
+  if (stored.gct_popup_win === windowId) {
+    await chrome.storage.session.remove('gct_popup_win');
   }
 });
 
@@ -53,17 +73,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 async function dispatch(msg, tabId) {
   switch (msg.type) {
 
-    // ── Progress update from content script ──
     case 'SCAN_PROGRESS': {
       const prev = await getTabState(tabId);
       await setTabState(tabId, { ...prev, status: 'scanning', pct: msg.pct, count: msg.count });
       return {};
     }
 
-    // ── Scan completed from content script ──
     case 'SCAN_DONE': {
       await setTabState(tabId, {
-        status: 'done',
+        status:    'done',
         summaries: msg.summaries,
         url:       msg.url,
         title:     msg.title,
@@ -73,20 +91,14 @@ async function dispatch(msg, tabId) {
       return {};
     }
 
-    // ── Start batch from popup ──
     case 'START_BATCH': {
       const { urls, config } = msg;
       if (!urls?.length) throw new Error('No URLs provided');
-      await setBatch({
-        queue:    urls,
-        doneIdx:  0,
-        total:    urls.length,
-        config,
-        done:     false,
-        scanSent: false,   // guard against duplicate DO_SCAN for same page
-      });
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      await chrome.tabs.update(tab.id, { url: urls[0] });
+      await setBatch({ queue: urls, doneIdx: 0, total: urls.length, config, done: false, scanSent: false });
+      // Navigate the stored target tab (the page tab, not the popup window)
+      const stored = await chrome.storage.session.get('gct_target_tab');
+      const targetTabId = stored.gct_target_tab || (await getFirstNormalTab());
+      await chrome.tabs.update(targetTabId, { url: urls[0] });
       return { total: urls.length };
     }
 
@@ -97,31 +109,37 @@ async function dispatch(msg, tabId) {
     case 'GET_BATCH_STATE':
       return { batch: await getBatch() };
 
+    // Popup passes explicit tabId so we don't rely on "active window" detection
     case 'GET_TAB_STATE': {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      return await getTabState(tab.id);
+      const tid = msg.tabId || await getTargetTabId();
+      return tid ? await getTabState(tid) : {};
     }
 
     case 'CLEAR_TAB_STATE': {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      await clearTabState(tab.id);
+      const tid = msg.tabId || await getTargetTabId();
+      if (tid) await clearTabState(tid);
       return {};
-    }
-
-    case 'RELAY_TO_CONTENT': {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const result = await chrome.tabs.sendMessage(tab.id, msg.payload);
-      return { result };
     }
 
     default: return {};
   }
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────────
+async function getTargetTabId() {
+  const stored = await chrome.storage.session.get('gct_target_tab');
+  return stored.gct_target_tab || null;
+}
+
+async function getFirstNormalTab() {
+  const [tab] = await chrome.tabs.query({ active: true, windowType: 'normal' });
+  return tab?.id || null;
+}
+
 // ── Advance batch: increment counter, navigate to next URL ─────────────────────
 async function advanceBatch(tabId, batch) {
   batch.doneIdx++;
-  batch.scanSent = false;  // reset guard for next page
+  batch.scanSent = false;
 
   if (batch.doneIdx < batch.total) {
     const nextUrl = batch.queue[batch.doneIdx];
@@ -141,8 +159,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 
   const batch = await getBatch();
   if (!batch || batch.done) return;
-
-  // Guard: only send DO_SCAN once per batch step
   if (batch.scanSent) return;
 
   let tab;
@@ -151,11 +167,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   const expectedUrl = batch.queue[batch.doneIdx];
   if (!expectedUrl || !urlsMatch(tab.url, expectedUrl)) return;
 
-  // Mark as sent immediately to prevent duplicate triggers
   batch.scanSent = true;
   await setBatch(batch);
 
-  // Let page settle, then start scan
   setTimeout(async () => {
     try {
       await chrome.tabs.sendMessage(tabId, {
@@ -163,7 +177,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
         config:    batch.config,
         batchMode: true,
       });
-    } catch { /* page not ready — scan will be retried on manual trigger */ }
+    } catch {}
   }, 1500);
 });
 

@@ -1,16 +1,5 @@
 'use strict';
 
-// ── Embedded mode: hide popup header when running inside the iframe panel ──────
-(function () {
-  if (window.self !== window.top) {
-    // Running inside content-script iframe — hide redundant header
-    document.addEventListener('DOMContentLoaded', () => {
-      const hdr = document.querySelector('.hdr');
-      if (hdr) hdr.style.display = 'none';
-    });
-  }
-})();
-
 // ── Default config ─────────────────────────────────────────────────────────────
 const CFG_DEFAULTS = {
   selector:         '[data-message-author-role]',
@@ -65,9 +54,27 @@ let currentRoles = ['user', 'assistant'];  // kept in sync with cfg.targetRoles
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function setFooter(msg) { elFooter.textContent = msg; }
 
+// Get the webpage tab that was active when the user clicked the extension icon.
+// Running as a chrome.windows.create popup means currentWindow is the popup
+// itself (type:'popup', no normal tabs), so we must use the stored target tab.
+async function getActiveTab() {
+  try {
+    const stored = await chrome.storage.session.get('gct_target_tab');
+    if (stored.gct_target_tab) {
+      const tab = await chrome.tabs.get(stored.gct_target_tab);
+      if (tab) return tab;
+    }
+  } catch {}
+  // Fallback: active tab in any normal window
+  const [tab] = await chrome.tabs.query({ active: true, windowType: 'normal' });
+  return tab || null;
+}
+
 async function sendToContent(payload) {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getActiveTab();
+    if (!tab) throw new Error('找不到目標頁面，請先開啟目標網頁再點擊擴充元件');
+    currentTabId = tab.id;
     return await chrome.tabs.sendMessage(tab.id, { ...payload, config: buildConfig() });
   } catch (e) {
     setFooter('無法與頁面通訊：' + e.message);
@@ -382,7 +389,7 @@ function monitorBatch(total) {
     }
 
     // Also fetch current scan progress from the active tab
-    const tabRes    = await sendToBg({ type: 'GET_TAB_STATE' });
+    const tabRes    = await sendToBg({ type: 'GET_TAB_STATE', tabId: currentTabId });
     const tabStatus = tabRes?.status;
     const currentPage = done + 1;
 
@@ -467,16 +474,18 @@ $('btn-reset-cfg').addEventListener('click', async () => {
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    currentTabId = tab?.id;
-    elPageTitle.textContent = tab?.title || '未知頁面';
-    elPageTitle.title       = tab?.url   || '';
+    const tab = await getActiveTab();
+    if (tab) {
+      currentTabId = tab.id;
+      elPageTitle.textContent = tab.title || '未知頁面';
+      elPageTitle.title       = tab.url   || '';
+    }
   } catch {}
 
   await loadSettings();
 
-  // Restore tab state if previously scanned
-  const state = await sendToBg({ type: 'GET_TAB_STATE' });
+  // Restore tab state if previously scanned (pass tabId explicitly)
+  const state = await sendToBg({ type: 'GET_TAB_STATE', tabId: currentTabId });
   if (state?.status === 'done' && state.summaries?.length) {
     summaries = state.summaries;
     renderMsgList();
@@ -499,13 +508,22 @@ async function init() {
   }
 }
 
-// ── Close button (visible when NOT in embedded iframe mode) ───────────────────
+// ── Close button: close the popup window ─────────────────────────────────────
 document.getElementById('btn-close-panel')?.addEventListener('click', () => {
-  // If inside iframe, tell parent content script to hide the panel
-  if (window.self !== window.top) {
-    window.parent.postMessage({ type: 'GCT_CLOSE' }, '*');
-  } else {
-    window.close(); // standalone window fallback
+  window.close();
+});
+
+// ── Refresh target tab info when extension icon is clicked again ──────────────
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === '_REFRESH_TARGET') {
+    getActiveTab().then(tab => {
+      if (tab) {
+        currentTabId = tab.id;
+        elPageTitle.textContent = tab.title || '未知頁面';
+        elPageTitle.title       = tab.url   || '';
+        setFooter(`已切換至：${tab.title || tab.url}`);
+      }
+    });
   }
 });
 
