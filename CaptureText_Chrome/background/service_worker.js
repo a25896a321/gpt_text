@@ -5,7 +5,7 @@ chrome.action.onClicked.addListener(async (tab) => {
   try {
     await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_PANEL' });
   } catch {
-    // Content script not yet active on this page (e.g. fresh tab) — inject first
+    // Content script not yet active on this page — inject first
     try {
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/content.js'] });
       await chrome.scripting.insertCSS(   { target: { tabId: tab.id }, files: ['content/content.css'] });
@@ -47,7 +47,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try   { sendResponse({ ok: true,  ...(await dispatch(msg, tabId)) }); }
     catch (e) { sendResponse({ ok: false, error: e.message }); }
   })();
-  return true; // async response
+  return true;
 });
 
 async function dispatch(msg, tabId) {
@@ -64,13 +64,12 @@ async function dispatch(msg, tabId) {
     case 'SCAN_DONE': {
       await setTabState(tabId, {
         status: 'done',
-        summaries: msg.summaries,   // [{ role, preview, index, selected }]
+        summaries: msg.summaries,
         url:       msg.url,
         title:     msg.title,
       });
-      // Auto-advance batch if active
       const batch = await getBatch();
-      if (batch && !batch.done) await advanceBatch(tabId, msg.summaries, batch);
+      if (batch && !batch.done) await advanceBatch(tabId, batch);
       return {};
     }
 
@@ -78,8 +77,14 @@ async function dispatch(msg, tabId) {
     case 'START_BATCH': {
       const { urls, config } = msg;
       if (!urls?.length) throw new Error('No URLs provided');
-      // No results array needed — each page exports its own file on completion
-      await setBatch({ queue: urls, doneIdx: 0, total: urls.length, config, done: false });
+      await setBatch({
+        queue:    urls,
+        doneIdx:  0,
+        total:    urls.length,
+        config,
+        done:     false,
+        scanSent: false,   // guard against duplicate DO_SCAN for same page
+      });
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       await chrome.tabs.update(tab.id, { url: urls[0] });
       return { total: urls.length };
@@ -92,7 +97,6 @@ async function dispatch(msg, tabId) {
     case 'GET_BATCH_STATE':
       return { batch: await getBatch() };
 
-    // ── Popup queries current tab state ──
     case 'GET_TAB_STATE': {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       return await getTabState(tab.id);
@@ -104,7 +108,6 @@ async function dispatch(msg, tabId) {
       return {};
     }
 
-    // ── Relay message to active tab's content script ──
     case 'RELAY_TO_CONTENT': {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const result = await chrome.tabs.sendMessage(tab.id, msg.payload);
@@ -115,10 +118,10 @@ async function dispatch(msg, tabId) {
   }
 }
 
-// ── Advance batch after a page finishes scanning ───────────────────────────────
-// Each page exports its own file independently via content.js; no results collected here.
-async function advanceBatch(tabId, summaries, batch) {
+// ── Advance batch: increment counter, navigate to next URL ─────────────────────
+async function advanceBatch(tabId, batch) {
   batch.doneIdx++;
+  batch.scanSent = false;  // reset guard for next page
 
   if (batch.doneIdx < batch.total) {
     const nextUrl = batch.queue[batch.doneIdx];
@@ -135,16 +138,24 @@ async function advanceBatch(tabId, summaries, batch) {
 // ── Auto-trigger scan when a batch page finishes loading ──────────────────────
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (changeInfo.status !== 'complete') return;
+
   const batch = await getBatch();
   if (!batch || batch.done) return;
 
-  // Verify this tab is on the expected URL
+  // Guard: only send DO_SCAN once per batch step
+  if (batch.scanSent) return;
+
   let tab;
   try { tab = await chrome.tabs.get(tabId); } catch { return; }
+
   const expectedUrl = batch.queue[batch.doneIdx];
   if (!expectedUrl || !urlsMatch(tab.url, expectedUrl)) return;
 
-  // Auto-scan after settle
+  // Mark as sent immediately to prevent duplicate triggers
+  batch.scanSent = true;
+  await setBatch(batch);
+
+  // Let page settle, then start scan
   setTimeout(async () => {
     try {
       await chrome.tabs.sendMessage(tabId, {
@@ -152,11 +163,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
         config:    batch.config,
         batchMode: true,
       });
-    } catch { /* page not ready yet */ }
+    } catch { /* page not ready — scan will be retried on manual trigger */ }
   }, 1500);
 });
 
-// ── Loose URL comparison (ignore trailing slash, hash) ─────────────────────────
+// ── Loose URL comparison (hostname + pathname, ignore query & hash) ─────────────
 function urlsMatch(a, b) {
   try {
     const ua = new URL(a), ub = new URL(b);

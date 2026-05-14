@@ -264,6 +264,35 @@ function scanFinished() {
   setFooter(`找到 ${summaries.length} 則訊息`);
   elBtnSidebar.disabled = summaries.length === 0;
   renderMsgList();
+
+  // Auto-export for regular (non-batch) scans when setting is enabled
+  if (cfg.autoExport && summaries.length) {
+    autoExportCapture();
+  }
+}
+
+async function autoExportCapture() {
+  let indices;
+  if (cfg.defaultSelection === 'none') return;
+  if (cfg.defaultSelection === 'all') {
+    indices = summaries.map(m => m.index);
+  } else {
+    indices = summaries.filter(m => m.role === cfg.defaultSelection).map(m => m.index);
+  }
+  if (!indices.length) return;
+
+  const r1 = await sendToContent({ type: 'SET_SELECTION', indices });
+  if (!r1?.ok) return;
+  // Update UI to reflect confirmed selection
+  summaries.forEach(m => m.selected = indices.includes(m.index));
+  renderMsgList();
+
+  const r2 = await sendToContent({ type: 'DO_EXPORT', format: cfg.exportFormat });
+  if (r2?.ok) {
+    elExportRow.classList.remove('hidden');
+    elBtnSidebar.disabled = false;
+    setFooter(`已自動匯出 ${r2.count} 則（${cfg.exportFormat.toUpperCase()}）`);
+  }
 }
 
 // ── Confirm selection (capture) ───────────────────────────────────────────────
@@ -337,24 +366,49 @@ function resetBatchUI() {
 
 function monitorBatch(total) {
   const interval = setInterval(async () => {
-    const res   = await sendToBg({ type: 'GET_BATCH_STATE' });
-    const batch = res?.batch;
+    const bRes  = await sendToBg({ type: 'GET_BATCH_STATE' });
+    const batch = bRes?.batch;
     if (!batch) { clearInterval(interval); resetBatchUI(); return; }
 
     const done = batch.doneIdx || 0;
-    const pct  = Math.round((done / total) * 100);
-    elBatchProgBar.style.width = pct + '%';
 
     if (batch.done) {
-      elBatchStatus.textContent = `批量完成！共 ${total} 頁，每頁已自動匯出`;
+      elBatchProgBar.style.width = '100%';
+      elBatchStatus.textContent  = `✅ 批量完成！共 ${total} 頁，每頁已自動匯出`;
       clearInterval(interval);
       resetBatchUI();
       setFooter(`批量完成 ${total} 頁`);
-    } else {
-      elBatchStatus.textContent = `進行中：${done} / ${total} 頁（每頁完成後自動匯出）`;
-      setFooter(`批量掃描 ${done}/${total}`);
+      return;
     }
-  }, 1500);
+
+    // Also fetch current scan progress from the active tab
+    const tabRes    = await sendToBg({ type: 'GET_TAB_STATE' });
+    const tabStatus = tabRes?.status;
+    const currentPage = done + 1;
+
+    if (tabStatus === 'scanning') {
+      const scanPct   = tabRes.pct   || 0;
+      const scanCount = tabRes.count || 0;
+      // Combined progress: completed pages + fraction of current scan
+      const combinedPct = Math.round(((done + scanPct / 100) / total) * 100);
+      elBatchProgBar.style.width = combinedPct + '%';
+      elBatchStatus.textContent  =
+        `掃描中… ${scanPct}%（已找到 ${scanCount} 則）進行第 ${currentPage} 頁 / 共 ${total} 頁`;
+      setFooter(`第 ${currentPage}/${total} 頁  掃描 ${scanPct}%`);
+    } else if (tabStatus === 'done') {
+      const overallPct = Math.round((done / total) * 100);
+      elBatchProgBar.style.width = overallPct + '%';
+      elBatchStatus.textContent  =
+        `第 ${done} 頁完成，等待跳轉至第 ${currentPage} 頁…（${done}/${total}）`;
+      setFooter(`已完成 ${done}/${total} 頁，準備跳轉…`);
+    } else {
+      const overallPct = Math.round((done / total) * 100);
+      elBatchProgBar.style.width = overallPct + '%';
+      elBatchStatus.textContent  =
+        `正在載入第 ${currentPage} 頁…（${done}/${total} 頁已完成）`;
+      setFooter(`批量：${done}/${total} 頁`);
+    }
+  }, 800);
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────

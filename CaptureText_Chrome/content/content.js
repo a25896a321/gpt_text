@@ -417,18 +417,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             selected: STATE.captured.some(c => c.index === m.index),
           }));
 
-          // Report completion to background
+          // Batch mode: export FIRST (before notifying background to avoid
+          // navigation racing the download trigger on the last URL)
+          if (msg.batchMode && STATE.captured.length) {
+            exportMessages(STATE.captured, cfg.exportFormat, cfg);
+          }
+
+          // Report completion to background (triggers advance to next URL)
           chrome.runtime.sendMessage({
             type:      'SCAN_DONE',
             summaries,
             url:       location.href,
             title:     document.title,
           }).catch(() => {});
-
-          // In batch mode: auto-export if autoExport is enabled (default true)
-          if (msg.batchMode && STATE.captured.length && cfg.autoExport !== false) {
-            exportMessages(STATE.captured, cfg.exportFormat, cfg);
-          }
 
           sendResponse({ ok: true, count: messages.length });
           break;
