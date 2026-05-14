@@ -12,6 +12,7 @@ const CFG_DEFAULTS = {
   xlsDelim:         '|',
   xlsCleanTargets:  '標題：',
   showIndex:        true,
+  autoExport:       true,   // auto-download after scan
 };
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
@@ -33,7 +34,7 @@ const elBtnCapture   = $('btn-capture');
 const elExportRow    = $('export-row');
 
 // Batch tab
-const elBatchUrls    = $('batch-urls');
+const elBatchUrls      = $('batch-urls');
 const elBtnBatchStart  = $('btn-batch-start');
 const elBtnBatchCancel = $('btn-batch-cancel');
 const elBatchProgWrap  = $('batch-progress-wrap');
@@ -41,16 +42,16 @@ const elBatchProgBar   = $('batch-progress-bar');
 const elBatchStatus    = $('batch-status');
 
 // Footer
-const elFooter       = $('footer-bar');
+const elFooter = $('footer-bar');
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let currentTabId    = null;
-let summaries       = [];   // [{ role, preview, index, selected }]
-let capturedIndices = [];   // indices confirmed by user
-let scanning        = false;
-let cfg             = { ...CFG_DEFAULTS };
+let currentTabId = null;
+let summaries    = [];   // [{ role, preview, index, selected }]
+let scanning     = false;
+let cfg          = { ...CFG_DEFAULTS };
+let currentRoles = ['user', 'assistant'];  // kept in sync with cfg.targetRoles
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function setFooter(msg) { elFooter.textContent = msg; }
 
 async function sendToContent(payload) {
@@ -80,8 +81,53 @@ function buildConfig() {
     xlsDelim:         cfg.xlsDelim || '|',
     xlsCleanTargets:  cfg.xlsCleanTargets.split(',').map(s => s.trim()).filter(Boolean),
     showIndex:        cfg.showIndex,
+    autoExport:       cfg.autoExport !== false,
   };
 }
+
+// ── Role-aware UI refresh ─────────────────────────────────────────────────────
+// Called whenever targetRoles changes. Updates:
+//   • quick-select button labels
+//   • defaultSelection dropdown options
+function updateRoleUI(preserveSelection) {
+  const roles = cfg.targetRoles.split(',').map(s => s.trim()).filter(Boolean);
+  currentRoles = roles;
+
+  // ── Quick-select buttons ──────────────────────────────────────────────────
+  const btn0 = $('qs-role0');
+  const btn1 = $('qs-role1');
+
+  btn0.textContent = roles[0] ? `僅選 ${roles[0]}` : '僅選 role0';
+  btn0.style.display = '';
+
+  if (roles[1]) {
+    btn1.textContent = `僅選 ${roles[1]}`;
+    btn1.style.display = '';
+  } else {
+    btn1.style.display = 'none';
+  }
+
+  // ── defaultSelection dropdown ─────────────────────────────────────────────
+  const sel   = $('cfg-defaultSelection');
+  const prev  = preserveSelection !== undefined ? preserveSelection : sel.value;
+
+  // Rebuild options: one per role + 全部 + 不選取
+  sel.innerHTML = roles
+    .map(r => `<option value="${r}">${r}</option>`)
+    .join('')
+    + '<option value="all">全部</option>'
+    + '<option value="none">不選取</option>';
+
+  // Restore previous selection if still valid
+  const valid = [...sel.options].some(o => o.value === prev);
+  sel.value = valid ? prev : (roles[0] || 'all');
+}
+
+// Live preview: update role UI whenever the targetRoles input changes
+$('cfg-targetRoles').addEventListener('input', () => {
+  cfg.targetRoles = $('cfg-targetRoles').value;
+  updateRoleUI();
+});
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -108,22 +154,22 @@ function renderMsgList() {
   elCaptureBar.classList.remove('hidden');
 
   elMsgList.innerHTML = summaries.map(m => {
-    const badgeCls = m.role === 'user' ? 'badge-user' : m.role === 'assistant' ? 'badge-asst' : 'badge-other';
-    const label    = m.role === 'user' ? 'User' : m.role === 'assistant' ? 'GPT' : m.role;
-    const checked  = m.selected ? 'checked' : '';
+    // Badge colour: first role = blue, second = green, others = yellow
+    const ri  = currentRoles.indexOf(m.role);
+    const cls = ri === 0 ? 'badge-user' : ri === 1 ? 'badge-asst' : 'badge-other';
+    const chk = m.selected ? 'checked' : '';
     return `<div class="msg-item${m.selected ? ' selected' : ''}" data-idx="${m.index}">
-      <input type="checkbox" ${checked} data-idx="${m.index}">
-      <span class="msg-badge ${badgeCls}">${label}</span>
+      <input type="checkbox" ${chk} data-idx="${m.index}">
+      <span class="msg-badge ${cls}">${m.role}</span>
       <span class="msg-preview">#${m.index} ${m.preview}</span>
     </div>`;
   }).join('');
 
   updateSelCount();
 
-  // Toggle checkbox on row click
   elMsgList.querySelectorAll('.msg-item').forEach(row => {
     row.addEventListener('click', e => {
-      if (e.target.tagName === 'INPUT') return; // handled by change
+      if (e.target.tagName === 'INPUT') return;
       const cb = row.querySelector('input[type=checkbox]');
       cb.checked = !cb.checked;
       cb.dispatchEvent(new Event('change'));
@@ -146,10 +192,11 @@ function updateSelCount() {
 }
 
 // ── Quick-select shortcuts ─────────────────────────────────────────────────────
-$('qs-user').addEventListener('click', () => setSelection(m => m.role === 'user'));
-$('qs-asst').addEventListener('click', () => setSelection(m => m.role === 'assistant'));
-$('qs-all' ).addEventListener('click', () => setSelection(() => true));
-$('qs-none').addEventListener('click', () => setSelection(() => false));
+// Use currentRoles[] so they always reflect the live setting
+$('qs-role0').addEventListener('click', () => setSelection(m => m.role === currentRoles[0]));
+$('qs-role1').addEventListener('click', () => setSelection(m => m.role === currentRoles[1]));
+$('qs-all'  ).addEventListener('click', () => setSelection(() => true));
+$('qs-none' ).addEventListener('click', () => setSelection(() => false));
 
 function setSelection(pred) {
   summaries.forEach(m => m.selected = pred(m));
@@ -167,7 +214,6 @@ elBtnScan.addEventListener('click', async () => {
   elScanStatus.textContent  = '掃描中…';
   setFooter('掃描中，請稍候…');
 
-  // Listen for progress via storage changes
   const storageKey = 'gct_tab_' + currentTabId;
   const watcher = changes => {
     const c = changes[storageKey];
@@ -179,7 +225,7 @@ elBtnScan.addEventListener('click', async () => {
     }
     if (v.status === 'done') {
       chrome.storage.session.onChanged.removeListener(watcher);
-      summaries = (v.summaries || []);
+      summaries = v.summaries || [];
       scanFinished();
     }
   };
@@ -216,7 +262,6 @@ elBtnCapture.addEventListener('click', async () => {
 
   const res = await sendToContent({ type: 'SET_SELECTION', indices });
   if (res?.ok) {
-    capturedIndices = indices;
     elExportRow.classList.remove('hidden');
     elBtnSidebar.disabled = false;
     setFooter(`已確認選取 ${indices.length} 則，可進行匯出`);
@@ -237,7 +282,7 @@ async function toggleSidebar() {
   const res = await sendToContent({ type: 'TOGGLE_SIDEBAR' });
   if (res) {
     const open = res.sidebarOpen;
-    elBtnSidebar.textContent       = open ? '📕' : '📖';
+    elBtnSidebar.textContent            = open ? '📕' : '📖';
     $('btn-sidebar-bottom').textContent = open ? '📕 關閉' : '📖 閱讀';
     setFooter(open ? '側邊閱讀模式已開啟' : '側邊閱讀模式已關閉');
   }
@@ -288,15 +333,15 @@ function monitorBatch(total) {
     const done = batch.doneIdx || 0;
     const pct  = Math.round((done / total) * 100);
     elBatchProgBar.style.width = pct + '%';
-    elBatchStatus.textContent  = batch.done
-      ? `批量完成！共 ${total} 頁`
-      : `進行中：${done} / ${total} 頁`;
-    setFooter(`批量掃描 ${done}/${total}`);
 
     if (batch.done) {
+      elBatchStatus.textContent = `批量完成！共 ${total} 頁，每頁已自動匯出`;
       clearInterval(interval);
       resetBatchUI();
-      setFooter(`批量完成，共 ${total} 頁，每頁已自動匯出`);
+      setFooter(`批量完成 ${total} 頁`);
+    } else {
+      elBatchStatus.textContent = `進行中：${done} / ${total} 頁（每頁完成後自動匯出）`;
+      setFooter(`批量掃描 ${done}/${total}`);
     }
   }, 1500);
 }
@@ -309,16 +354,19 @@ async function loadSettings() {
 }
 
 function applySettingsToUI() {
-  $('cfg-selector').value         = cfg.selector;
-  $('cfg-roleAttr').value         = cfg.roleAttr;
-  $('cfg-targetRoles').value      = cfg.targetRoles;
-  $('cfg-scrollDelay').value      = cfg.scrollDelay;
-  $('cfg-defaultSelection').value = cfg.defaultSelection;
-  $('cfg-exportFormat').value     = cfg.exportFormat;
-  $('cfg-exportFilename').value   = cfg.exportFilename;
-  $('cfg-xlsDelim').value         = cfg.xlsDelim;
-  $('cfg-xlsCleanTargets').value  = cfg.xlsCleanTargets;
-  $('cfg-showIndex').checked      = cfg.showIndex;
+  $('cfg-selector').value        = cfg.selector;
+  $('cfg-roleAttr').value        = cfg.roleAttr;
+  $('cfg-targetRoles').value     = cfg.targetRoles;
+  $('cfg-scrollDelay').value     = cfg.scrollDelay;
+  $('cfg-exportFormat').value    = cfg.exportFormat;
+  $('cfg-exportFilename').value  = cfg.exportFilename;
+  $('cfg-xlsDelim').value        = cfg.xlsDelim;
+  $('cfg-xlsCleanTargets').value = cfg.xlsCleanTargets;
+  $('cfg-showIndex').checked     = cfg.showIndex;
+  $('cfg-autoExport').checked    = cfg.autoExport !== false;
+
+  // Rebuild role-dependent UI elements, passing saved defaultSelection to preserve it
+  updateRoleUI(cfg.defaultSelection);
 }
 
 function readSettingsFromUI() {
@@ -333,12 +381,14 @@ function readSettingsFromUI() {
     xlsDelim:         $('cfg-xlsDelim').value || '|',
     xlsCleanTargets:  $('cfg-xlsCleanTargets').value.trim(),
     showIndex:        $('cfg-showIndex').checked,
+    autoExport:       $('cfg-autoExport').checked,
   };
 }
 
 $('btn-save-cfg').addEventListener('click', async () => {
   cfg = readSettingsFromUI();
   await chrome.storage.sync.set({ gct_cfg: cfg });
+  updateRoleUI(cfg.defaultSelection); // refresh buttons after explicit save
   setFooter('設定已儲存');
 });
 
@@ -351,15 +401,13 @@ $('btn-reset-cfg').addEventListener('click', async () => {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
-  // Get current tab info
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     currentTabId = tab?.id;
     elPageTitle.textContent = tab?.title || '未知頁面';
-    elPageTitle.title       = tab?.url || '';
+    elPageTitle.title       = tab?.url   || '';
   } catch {}
 
-  // Load settings
   await loadSettings();
 
   // Restore tab state if previously scanned
@@ -367,12 +415,12 @@ async function init() {
   if (state?.status === 'done' && state.summaries?.length) {
     summaries = state.summaries;
     renderMsgList();
-    elScanStatus.textContent  = `上次掃描：${summaries.length} 則訊息`;
-    elBtnSidebar.disabled     = false;
+    elScanStatus.textContent = `上次掃描：${summaries.length} 則訊息`;
+    elBtnSidebar.disabled    = false;
     setFooter(`已載入上次掃描結果（${summaries.length} 則）`);
   }
 
-  // Check if batch is running
+  // Resume batch UI if still running
   const bRes  = await sendToBg({ type: 'GET_BATCH_STATE' });
   const batch = bRes?.batch;
   if (batch && !batch.done) {

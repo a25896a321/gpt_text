@@ -9,11 +9,12 @@ const CFG_DEFAULT = {
   targetRoles:      ['user', 'assistant'],
   scrollDelay:      600,
   showIndex:        true,
-  defaultSelection: 'assistant', // 'all' | 'user' | 'assistant' | 'none'
+  defaultSelection: 'assistant', // 'all' | <roleName> | 'none'
   exportFormat:     'xls',
   exportFilename:   '',
   xlsDelim:         '|',
   xlsCleanTargets:  ['標題：'],
+  autoExport:       true,        // auto-download after scan completes
 };
 
 // ── Runtime state ──────────────────────────────────────────────────────────────
@@ -337,8 +338,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             title:     document.title,
           }).catch(() => {});
 
-          // In batch mode: auto-export immediately
-          if (msg.batchMode && STATE.captured.length) {
+          // In batch mode: auto-export if autoExport is enabled (default true)
+          if (msg.batchMode && STATE.captured.length && cfg.autoExport !== false) {
             exportMessages(STATE.captured, cfg.exportFormat, cfg);
           }
 

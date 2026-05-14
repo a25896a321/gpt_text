@@ -62,7 +62,8 @@ async function dispatch(msg, tabId) {
     case 'START_BATCH': {
       const { urls, config } = msg;
       if (!urls?.length) throw new Error('No URLs provided');
-      await setBatch({ queue: urls, doneIdx: 0, total: urls.length, results: [], config, done: false });
+      // No results array needed — each page exports its own file on completion
+      await setBatch({ queue: urls, doneIdx: 0, total: urls.length, config, done: false });
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       await chrome.tabs.update(tab.id, { url: urls[0] });
       return { total: urls.length };
@@ -99,14 +100,13 @@ async function dispatch(msg, tabId) {
 }
 
 // ── Advance batch after a page finishes scanning ───────────────────────────────
+// Each page exports its own file independently via content.js; no results collected here.
 async function advanceBatch(tabId, summaries, batch) {
-  batch.results.push({ url: batch.queue[batch.doneIdx], summaries });
   batch.doneIdx++;
 
   if (batch.doneIdx < batch.total) {
     const nextUrl = batch.queue[batch.doneIdx];
     await setBatch(batch);
-    // Brief pause then navigate
     setTimeout(async () => {
       try { await chrome.tabs.update(tabId, { url: nextUrl }); } catch {}
     }, 1500);

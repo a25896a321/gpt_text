@@ -44,10 +44,10 @@
   </div>
   <div id="scan-status" class="status-line">尚未掃描</div>
 
-  <!-- Quick-select shortcuts -->
+  <!-- Quick-select shortcuts (text updated dynamically by JS) -->
   <div class="row gap-4 mt-4">
-    <button class="btn btn-xs btn-blue"  id="qs-user">僅選 User</button>
-    <button class="btn btn-xs btn-green" id="qs-asst">僅選 Assistant</button>
+    <button class="btn btn-xs btn-blue"  id="qs-role0">僅選 role0</button>
+    <button class="btn btn-xs btn-green" id="qs-role1">僅選 role1</button>
     <button class="btn btn-xs btn-ghost" id="qs-all">全選</button>
     <button class="btn btn-xs btn-ghost" id="qs-none">清除</button>
   </div>
@@ -122,12 +122,9 @@
     <input id="cfg-scrollDelay" class="input" type="number" min="200" max="3000" step="100" value="600">
   </div>
   <div class="field">
-    <label class="lbl">預設選取</label>
+    <label class="lbl">預設選取<small>（選項跟隨目標角色自動產生）</small></label>
     <select id="cfg-defaultSelection" class="select">
-      <option value="assistant">僅 Assistant</option>
-      <option value="user">僅 User</option>
-      <option value="all">全部</option>
-      <option value="none">不選取</option>
+      <!-- options rebuilt dynamically by JS based on targetRoles -->
     </select>
   </div>
   <div class="field">
@@ -154,6 +151,10 @@
   <div class="field row gap-8">
     <label class="lbl">顯示序號</label>
     <input id="cfg-showIndex" type="checkbox" checked>
+  </div>
+  <div class="field row gap-8">
+    <label class="lbl">自動匯出（掃描完成後立即下載）</label>
+    <input id="cfg-autoExport" type="checkbox" checked>
   </div>
 
   <div class="row mt-8 gap-6">
