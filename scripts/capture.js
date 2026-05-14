@@ -1,21 +1,20 @@
 (function () {
   'use strict';
 
-  // ── 守衛：重複執行時先清除舊面板 ────────────────────────────────────────────
   if (window.__GPTCapture) window.__GPTCapture.destroy();
 
-  // ── 可調整設定（⚙ 面板可即時修改） ─────────────────────────────────────────
+  // ── 可調整設定（⚙ 面板可即時修改）─────────────────────────────────────────
   const CFG = {
-    selector:    '[data-message-author-role]', // CSS 選取器
-    roleAttr:    'data-message-author-role',   // 識別角色的屬性名稱
-    targetRoles: ['user', 'assistant'],         // 空陣列 = 不過濾，顯示全部角色
-    scrollStep:  0,     // 0 = 自動（視窗高度 × 0.6），或指定像素
-    scrollDelay: 500,   // 每步滾動後等待毫秒
+    selector:    '[data-message-author-role]',
+    roleAttr:    'data-message-author-role',
+    targetRoles: ['user', 'assistant'],
+    scrollStep:  0,       // 0 = 自動（容器高 × 0.6）
+    scrollDelay: 600,     // 每步等待毫秒（虛擬渲染需要足夠時間）
+    maxListRows: 10,       // 清單同時可見筆數
   };
 
-  // ── 狀態 ──────────────────────────────────────────────────────────────────────
   const STATE = {
-    messages: [],       // { index, role, preview, text, selected }[]
+    messages: [],
     capturedData: null,
   };
 
@@ -23,13 +22,16 @@
   const STYLES = `
     #gcp-panel {
       position: fixed; top: 16px; right: 16px;
-      width: 380px; max-height: 92vh;
+      width: 385px;
       background: #1a1a1a; color: #e0e0e0;
       border: 1px solid #3a3a3a; border-radius: 10px;
       box-shadow: 0 8px 32px rgba(0,0,0,.65);
       z-index: 999999;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      font-size: 13px; display: flex; flex-direction: column; overflow: hidden;
+      font-size: 13px; display: flex; flex-direction: column;
+      overflow: hidden;
+      /* 面板整體最大高度，超出時各 section 不縮放，只有清單滾動 */
+      max-height: 92vh;
     }
     #gcp-panel * { box-sizing: border-box; margin: 0; padding: 0; }
     .gcp-header {
@@ -56,6 +58,7 @@
     #gcp-settings {
       padding: 12px 14px; border-bottom: 1px solid #2a2a2a;
       background: #141414; flex-shrink: 0;
+      overflow-y: auto; max-height: 300px;
     }
     .gcp-settings-title {
       font-size: 10px; font-weight: 700; text-transform: uppercase;
@@ -68,9 +71,13 @@
       color: #ddd; font-size: 12px; padding: 5px 8px; outline: none;
       font-family: 'Consolas', 'Courier New', monospace; line-height: 1.4;
     }
-    .gcp-input:focus { border-color: #10a37f; }
+    .gcp-input-sm {
+      width: 72px; background: #1f1f1f; border: 1px solid #3a3a3a; border-radius: 4px;
+      color: #ddd; font-size: 12px; padding: 5px 8px; outline: none; text-align: center;
+    }
+    .gcp-input:focus, .gcp-input-sm:focus { border-color: #10a37f; }
     .gcp-hint { font-size: 10px; color: #555; margin-top: 3px; line-height: 1.4; }
-    /* ── 通用區塊 ── */
+    /* ── 通用 ── */
     .gcp-section {
       padding: 10px 14px; border-bottom: 1px solid #2a2a2a; flex-shrink: 0;
     }
@@ -89,9 +96,10 @@
     .gcp-ok   { color: #10a37f; }
     .gcp-warn { color: #f59e0b; }
     .gcp-err  { color: #ef4444; }
-    /* ── 訊息清單 ── */
+    /* ── 清單（高度由 JS 動態設定）── */
     .gcp-list {
-      overflow-y: auto; flex: 1; padding: 4px 0; min-height: 120px;
+      overflow-y: auto; flex-shrink: 0; padding: 4px 0;
+      /* max-height 由 updateListHeight() 注入 */
     }
     .gcp-empty { color: #555; font-size: 12px; padding: 24px 14px; text-align: center; }
     .gcp-item {
@@ -106,11 +114,16 @@
       font-size: 10px; padding: 2px 6px; border-radius: 3px;
       font-weight: 700; flex-shrink: 0; margin-top: 1px; line-height: 1.3; white-space: nowrap;
     }
-    .gcp-badge-user   { background: #6d28d9; color: #fff; }
-    .gcp-badge-asst   { background: #047857; color: #fff; }
-    .gcp-badge-other  { background: #92400e; color: #fff; }
+    .gcp-badge-user  { background: #6d28d9; color: #fff; }
+    .gcp-badge-asst  { background: #047857; color: #fff; }
+    .gcp-badge-other { background: #92400e; color: #fff; }
     .gcp-item-idx  { font-size: 11px; color: #555; flex-shrink: 0; margin-top: 2px; }
     .gcp-item-text { font-size: 12px; color: #999; line-height: 1.45; flex: 1; }
+    /* 清單捲動提示 */
+    .gcp-list-footer {
+      text-align: center; font-size: 10px; color: #444; padding: 4px 0;
+      border-top: 1px solid #1e1e1e; flex-shrink: 0;
+    }
   `;
 
   function injectStyles() {
@@ -134,7 +147,7 @@
         </div>
       </div>
 
-      <!-- ⚙ 設定面板（預設隱藏） -->
+      <!-- ⚙ 設定面板（預設隱藏）-->
       <div id="gcp-settings" style="display:none">
         <div class="gcp-settings-title">⚙ 捕獲目標設定</div>
 
@@ -154,10 +167,28 @@
           <label class="gcp-label">捕獲角色值（逗號分隔）</label>
           <input class="gcp-input" id="gcp-cfg-roles" value="${CFG.targetRoles.join(', ')}"
             placeholder="e.g. user, assistant">
-          <div class="gcp-hint">留空 = 不過濾，顯示全部角色；多個值用英文逗號分隔</div>
+          <div class="gcp-hint">留空 = 不過濾，顯示全部角色</div>
         </div>
 
-        <div class="gcp-row" style="margin-top:2px">
+        <div class="gcp-field">
+          <label class="gcp-label">清單預覽筆數（可捲動）</label>
+          <div class="gcp-row">
+            <input class="gcp-input-sm" id="gcp-cfg-rows" type="number"
+              min="3" max="50" value="${CFG.maxListRows}">
+            <span style="font-size:11px;color:#666">筆（預設 10，超出可向下捲動）</span>
+          </div>
+        </div>
+
+        <div class="gcp-field">
+          <label class="gcp-label">每步滾動延遲（毫秒）</label>
+          <div class="gcp-row">
+            <input class="gcp-input-sm" id="gcp-cfg-delay" type="number"
+              min="200" max="3000" value="${CFG.scrollDelay}">
+            <span style="font-size:11px;color:#666">ms（越小越快，但過小可能遺漏節點）</span>
+          </div>
+        </div>
+
+        <div class="gcp-row" style="margin-top:6px">
           <button class="gcp-btn gcp-btn-primary" id="gcp-cfg-apply">套用設定</button>
           <span class="gcp-status" id="gcp-cfg-status"></span>
         </div>
@@ -182,10 +213,11 @@
         </div>
       </div>
 
-      <!-- 訊息清單 -->
+      <!-- 訊息清單（高度由 JS 控制）-->
       <div class="gcp-list" id="gcp-list">
         <div class="gcp-empty">請先點擊「掃描訊息」</div>
       </div>
+      <div class="gcp-list-footer" id="gcp-list-footer" style="display:none"></div>
 
       <!-- 步驟 3：捕獲 -->
       <div class="gcp-section">
@@ -210,34 +242,28 @@
     return el;
   }
 
-  // ── 工具函式 ──────────────────────────────────────────────────────────────────
+  // ── 工具 ──────────────────────────────────────────────────────────────────────
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   function timestamp() {
     const d = new Date();
-    return [
-      d.getFullYear(),
+    return [d.getFullYear(),
       String(d.getMonth() + 1).padStart(2, '0'),
-      String(d.getDate()).padStart(2, '0'),
-      '_',
+      String(d.getDate()).padStart(2, '0'), '_',
       String(d.getHours()).padStart(2, '0'),
       String(d.getMinutes()).padStart(2, '0'),
-      String(d.getSeconds()).padStart(2, '0'),
-    ].join('');
+      String(d.getSeconds()).padStart(2, '0')].join('');
   }
 
   function escHtml(s) {
-    return String(s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   function download(content, filename, mime) {
     const blob = new Blob([content], { type: mime });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(blob), download: filename,
+    });
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -250,35 +276,73 @@
     return { label: role.slice(0, 8).toUpperCase(), cls: 'gcp-badge-other' };
   }
 
-  // ── 核心掃描：從頂端逐步滾動，每步收集可見節點與完整文字 ─────────────────────
-  // 解決 React 虛擬渲染問題：頁面只渲染可視區域的 DOM 節點，
-  // 離開可視範圍的節點會被移除，因此必須在每個滾動位置就地擷取文字。
-  async function scrollAndScan(statusEl) {
-    // 先回到頂端，確保從第一條訊息開始收集
-    window.scrollTo(0, 0);
-    await sleep(700);
+  // ── 偵測真正的滾動容器 ────────────────────────────────────────────────────────
+  // ChatGPT 的對話內容可能在 overflow-y:auto 的內層 div 中，而非 window。
+  // 策略：從第一個訊息節點向上尋找最近的可滾動祖先元素。
+  function findScrollContainer() {
+    const firstMsg = document.querySelector(CFG.selector);
+    if (firstMsg) {
+      let el = firstMsg.parentElement;
+      while (el && el !== document.documentElement) {
+        const oy = window.getComputedStyle(el).overflowY;
+        // 可滾動且內容高度確實超過顯示高度
+        if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 30) {
+          return el;
+        }
+        el = el.parentElement;
+      }
+    }
+    // 退回到 window 滾動
+    return null;
+  }
 
-    // 用 Map 做去重：key = role + '\0' + 前 120 字（足夠識別唯一訊息）
+  // 根據偵測結果建立統一滾動 API
+  function makeScroller(container) {
+    const isWin = !container;
+    return {
+      scrollTo(y)    { if (isWin) window.scrollTo(0, y); else container.scrollTop = y; },
+      get scrollH()  { return isWin
+          ? Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)
+          : container.scrollHeight; },
+      get clientH()  { return isWin ? window.innerHeight : container.clientHeight; },
+      get scrollTop(){ return isWin ? window.scrollY : container.scrollTop; },
+      label: isWin ? 'window' : (container.tagName + (container.id ? '#' + container.id : '')),
+    };
+  }
+
+  // ── 核心掃描：偵測容器 → 從頂端逐步往下收集所有訊息節點 ───────────────────────
+  async function scrollAndScan(statusEl) {
+    // 1. 先讓 window 小幅滾動，觸發 React 初始渲染
+    window.scrollTo(0, 0);
+    await sleep(500);
+    window.scrollTo(0, window.innerHeight * 0.4);
+    await sleep(700);
+    window.scrollTo(0, 0);
+    await sleep(500);
+
+    // 2. 偵測正確的滾動容器
+    const scroller = makeScroller(findScrollContainer());
+    statusEl.textContent = `偵測到滾動容器：${scroller.label}`;
+    statusEl.className = 'gcp-status gcp-warn';
+    await sleep(300);
+
+    // 3. 回到頂端
+    scroller.scrollTo(0);
+    await sleep(600);
+
+    // 4. 用 Map 去重：key = role + '\0' + 前 120 字
     const seen = new Map();
 
-    const step = CFG.scrollStep > 0
-      ? CFG.scrollStep
-      : Math.max(250, Math.floor(window.innerHeight * 0.6));
-
-    // 在當前視窗位置擷取所有可見節點並存入 Map
     function harvest() {
       document.querySelectorAll(CFG.selector).forEach(node => {
         const role = node.getAttribute(CFG.roleAttr) || 'unknown';
-        // 按設定過濾角色（targetRoles 為空時不過濾）
         if (CFG.targetRoles.length > 0 && !CFG.targetRoles.includes(role)) return;
         const text = node.innerText.trim();
         if (!text) return;
-        // 去重鍵：以角色 + 開頭 120 字區分
         const key = role + '\x00' + text.slice(0, 120);
         if (!seen.has(key)) {
           seen.set(key, {
-            role,
-            text,                                           // 立即儲存完整文字
+            role, text,
             preview: text.replace(/\s+/g, ' ').slice(0, 60),
             order: seen.size,
             selected: true,
@@ -287,48 +351,76 @@
       });
     }
 
+    // 5. 逐步滾動收集
+    const step = CFG.scrollStep > 0
+      ? CFG.scrollStep
+      : Math.max(200, Math.floor(scroller.clientH * 0.6));
+
     let pos = 0;
     let stableRounds = 0;
-    let lastScrollHeight = 0;
+    let lastScrollH = 0;
 
-    for (let iter = 0; iter < 600; iter++) {
+    for (let iter = 0; iter < 800; iter++) {
       harvest();
 
-      const totalH = document.body.scrollHeight;
+      const totalH = scroller.scrollH;
       const pct = totalH > 0 ? Math.min(100, Math.round((pos / totalH) * 100)) : 0;
       statusEl.textContent = `掃描中 ${pct}%… 已收集 ${seen.size} 筆`;
       statusEl.className = 'gcp-status gcp-warn';
 
-      // 到達底部後，等待 scrollHeight 穩定（連續 3 次無變化）才結束
       if (pos >= totalH) {
-        if (totalH === lastScrollHeight) {
-          if (++stableRounds >= 3) break;
+        if (totalH === lastScrollH) {
+          if (++stableRounds >= 3) break; // 底部穩定，結束
         } else {
-          stableRounds = 0;
+          stableRounds = 0; // scrollHeight 增長，繼續
         }
-        lastScrollHeight = totalH;
+        lastScrollH = totalH;
       }
 
       pos += step;
-      window.scrollTo(0, pos);
+      scroller.scrollTo(pos);
       await sleep(CFG.scrollDelay);
     }
 
-    // 最後再 harvest 一次確保底部節點不遺漏
+    // 6. 最後再 harvest 一次，確保底部節點不遺漏
     harvest();
 
-    // 回到頂端，方便使用者閱讀
-    window.scrollTo(0, 0);
+    // 7. 滾回頂端
+    scroller.scrollTo(0);
 
     return Array.from(seen.values())
       .sort((a, b) => a.order - b.order)
       .map((m, i) => ({ ...m, index: i + 1 }));
   }
 
+  // ── 清單高度（依 maxListRows 動態設定）──────────────────────────────────────
+  const ITEM_H = 40; // 每筆項目約 40px（上下 padding 7px + 文字 ~26px）
+
+  function updateListHeight() {
+    const listEl   = document.getElementById('gcp-list');
+    const footerEl = document.getElementById('gcp-list-footer');
+    if (!listEl) return;
+    const maxH = CFG.maxListRows * ITEM_H;
+    listEl.style.maxHeight = maxH + 'px';
+    listEl.style.overflowY = 'auto';
+
+    // 顯示捲動提示
+    const total = STATE.messages.length;
+    if (footerEl) {
+      if (total > CFG.maxListRows) {
+        footerEl.textContent = `共 ${total} 筆，向下捲動查看更多`;
+        footerEl.style.display = 'block';
+      } else {
+        footerEl.style.display = 'none';
+      }
+    }
+  }
+
   // ── 渲染清單 ──────────────────────────────────────────────────────────────────
   function renderList(listEl, messages, onToggle) {
     if (messages.length === 0) {
-      listEl.innerHTML = '<div class="gcp-empty">未找到訊息，請確認頁面已載入或調整設定後重新掃描</div>';
+      listEl.innerHTML = '<div class="gcp-empty">未找到訊息，請確認選取器或頁面是否完整載入</div>';
+      updateListHeight();
       return;
     }
     listEl.innerHTML = '';
@@ -345,6 +437,7 @@
       item.querySelector('input').addEventListener('change', e => onToggle(i, e.target.checked));
       listEl.appendChild(item);
     });
+    updateListHeight();
   }
 
   // ── 匯出格式 ──────────────────────────────────────────────────────────────────
@@ -356,15 +449,12 @@
       `網址：${location.href}`,
       `時間：${now}`,
       `捕獲訊息：${messages.length} 筆`,
-      '='.repeat(40),
-      '',
+      '='.repeat(40), '',
     ].join('\n');
-    const body = messages
-      .map(m => {
-        const label = m.role === 'user' ? '[User]' : m.role === 'assistant' ? '[ChatGPT]' : `[${m.role}]`;
-        return `${label} #${m.index}\n${m.text}\n${divider}`;
-      })
-      .join('\n\n');
+    const body = messages.map(m => {
+      const label = m.role === 'user' ? '[User]' : m.role === 'assistant' ? '[ChatGPT]' : `[${m.role}]`;
+      return `${label} #${m.index}\n${m.text}\n${divider}`;
+    }).join('\n\n');
     return header + body;
   }
 
@@ -382,24 +472,15 @@
     return `<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>GPT 捕獲 ${escHtml(now)}</title>
-  <style>
-    body{font-family:system-ui,sans-serif;max-width:840px;margin:2em auto;padding:0 1.2em;color:#111}
-    h2{font-size:1.15em;margin-bottom:.3em}
-    .meta{color:#777;font-size:.85em;margin-bottom:1.8em}
-  </style>
+  <style>body{font-family:system-ui,sans-serif;max-width:840px;margin:2em auto;padding:0 1.2em;color:#111}h2{font-size:1.15em;margin-bottom:.3em}.meta{color:#777;font-size:.85em;margin-bottom:1.8em}</style>
 </head>
 <body>
   <h2>📋 GPT 對話捕獲</h2>
-  <p class="meta">
-    網址：<a href="${escHtml(location.href)}">${escHtml(location.href)}</a><br>
-    時間：${escHtml(now)}，共 ${messages.length} 筆
-  </p>
+  <p class="meta">網址：<a href="${escHtml(location.href)}">${escHtml(location.href)}</a><br>時間：${escHtml(now)}，共 ${messages.length} 筆</p>
   ${rows}
-</body>
-</html>`;
+</body></html>`;
   }
 
   // ── 主邏輯 ────────────────────────────────────────────────────────────────────
@@ -408,19 +489,17 @@
       injectStyles();
       buildPanel();
 
-      const cfgBtn      = document.getElementById('gcp-cfg-btn');
-      const cfgSection  = document.getElementById('gcp-settings');
-      const cfgApply    = document.getElementById('gcp-cfg-apply');
-      const cfgStatus   = document.getElementById('gcp-cfg-status');
-      const scanBtn     = document.getElementById('gcp-scan');
-      const scanInfo    = document.getElementById('gcp-scan-info');
-      const scanStatus  = document.getElementById('gcp-scan-status');
-      const listEl      = document.getElementById('gcp-list');
-      const selCount    = document.getElementById('gcp-sel-count');
-      const captureBtn  = document.getElementById('gcp-capture');
-      const expStatus   = document.getElementById('gcp-export-status');
+      const cfgBtn     = document.getElementById('gcp-cfg-btn');
+      const cfgSection = document.getElementById('gcp-settings');
+      const cfgApply   = document.getElementById('gcp-cfg-apply');
+      const cfgStatus  = document.getElementById('gcp-cfg-status');
+      const scanBtn    = document.getElementById('gcp-scan');
+      const scanInfo   = document.getElementById('gcp-scan-info');
+      const scanStatus = document.getElementById('gcp-scan-status');
+      const listEl     = document.getElementById('gcp-list');
+      const selCount   = document.getElementById('gcp-sel-count');
+      const expStatus  = document.getElementById('gcp-export-status');
 
-      // ── 輔助 ──
       function refreshCount() {
         const n = STATE.messages.filter(m => m.selected).length;
         selCount.textContent = `已選 ${n} 筆`;
@@ -436,56 +515,51 @@
         refreshCount();
       }
 
-      // ── ⚙ 設定面板切換 ──
+      // ⚙ 切換設定面板
       cfgBtn.addEventListener('click', () => {
         const open = cfgSection.style.display === 'none';
         cfgSection.style.display = open ? 'block' : 'none';
         cfgBtn.classList.toggle('active', open);
       });
 
-      // ── 套用設定 ──
+      // 套用設定
       cfgApply.addEventListener('click', () => {
         const sel   = document.getElementById('gcp-cfg-sel').value.trim();
         const attr  = document.getElementById('gcp-cfg-attr').value.trim();
         const roles = document.getElementById('gcp-cfg-roles').value
           .split(',').map(s => s.trim()).filter(Boolean);
+        const rows  = parseInt(document.getElementById('gcp-cfg-rows').value, 10);
+        const delay = parseInt(document.getElementById('gcp-cfg-delay').value, 10);
 
-        if (!sel) {
-          cfgStatus.textContent = '⚠ 選取器不可空白';
-          cfgStatus.className = 'gcp-status gcp-err';
-          return;
-        }
-        // 試驗選取器是否合法
+        if (!sel) { setStatus(cfgStatus, '⚠ 選取器不可空白', 'err'); return; }
         try { document.querySelectorAll(sel); } catch {
-          cfgStatus.textContent = '⚠ 選取器語法錯誤';
-          cfgStatus.className = 'gcp-status gcp-err';
-          return;
+          setStatus(cfgStatus, '⚠ 選取器語法錯誤', 'err'); return;
         }
-
         CFG.selector    = sel;
         CFG.roleAttr    = attr || CFG.roleAttr;
         CFG.targetRoles = roles;
+        if (!isNaN(rows) && rows >= 1) CFG.maxListRows = rows;
+        if (!isNaN(delay) && delay >= 100) CFG.scrollDelay = delay;
 
-        cfgStatus.textContent = '✔ 設定已套用，請重新掃描';
-        cfgStatus.className = 'gcp-status gcp-ok';
+        setStatus(cfgStatus, '✔ 設定已套用，請重新掃描', 'ok');
 
-        // 清除舊掃描結果
         STATE.messages = [];
         STATE.capturedData = null;
         listEl.innerHTML = '<div class="gcp-empty">設定已變更，請重新掃描</div>';
+        updateListHeight();
         scanInfo.textContent = '尚未掃描';
         scanInfo.style.color = '#555';
         refreshCount();
       });
 
-      // ── 關閉 ──
+      // 關閉
       document.getElementById('gcp-x').addEventListener('click', () => {
         document.getElementById('gcp-panel')?.remove();
         document.getElementById('gcp-styles')?.remove();
         window.__GPTCapture = null;
       });
 
-      // ── 掃描 ──
+      // 掃描
       scanBtn.addEventListener('click', async () => {
         scanBtn.disabled = true;
         STATE.capturedData = null;
@@ -497,22 +571,17 @@
           const n = STATE.messages.length;
           scanInfo.textContent = `已找到 ${n} 筆`;
           scanInfo.style.color = n > 0 ? '#10a37f' : '#ef4444';
-          if (n === 0) {
-            scanStatus.textContent = '未找到訊息，請確認選取器設定或頁面是否完整載入';
-            scanStatus.className = 'gcp-status gcp-err';
-          } else {
-            scanStatus.textContent = `掃描完成`;
-            scanStatus.className = 'gcp-status gcp-ok';
-          }
+          setStatus(scanStatus,
+            n === 0 ? '未找到訊息，請確認選取器設定或頁面是否完整載入' : `掃描完成（共 ${n} 筆）`,
+            n === 0 ? 'err' : 'ok');
         } catch (err) {
-          scanStatus.textContent = `掃描失敗：${err.message}`;
-          scanStatus.className = 'gcp-status gcp-err';
+          setStatus(scanStatus, `掃描失敗：${err.message}`, 'err');
         } finally {
           scanBtn.disabled = false;
         }
       });
 
-      // ── 快捷選取 ──
+      // 快捷選取
       document.getElementById('gcp-sel-user').addEventListener('click', () => {
         STATE.messages.forEach(m => { m.selected = m.role === 'user'; });
         rerender();
@@ -530,52 +599,42 @@
         rerender();
       });
 
-      // ── 捕獲 ──
-      captureBtn.addEventListener('click', () => {
+      // 捕獲
+      document.getElementById('gcp-capture').addEventListener('click', () => {
         const selected = STATE.messages.filter(m => m.selected);
         if (selected.length === 0) {
-          expStatus.textContent = '⚠ 請先勾選至少一筆訊息';
-          expStatus.className = 'gcp-status gcp-err';
-          return;
+          setStatus(expStatus, '⚠ 請先勾選至少一筆訊息', 'err'); return;
         }
-        // 文字已在掃描時儲存，直接使用（無需重新讀取可能已不在 DOM 的節點）
         STATE.capturedData = selected;
-        expStatus.textContent = `✔ 已捕獲 ${selected.length} 筆，請選擇匯出格式`;
-        expStatus.className = 'gcp-status gcp-ok';
+        setStatus(expStatus, `✔ 已捕獲 ${selected.length} 筆，請選擇匯出格式`, 'ok');
       });
 
       function requireCaptured() {
         if (!STATE.capturedData) {
-          expStatus.textContent = '⚠ 請先點擊「捕獲選取項目」';
-          expStatus.className = 'gcp-status gcp-err';
-          return false;
+          setStatus(expStatus, '⚠ 請先點擊「捕獲選取項目」', 'err'); return false;
         }
         return true;
       }
 
-      // ── 匯出 TXT ──
+      // 匯出
       document.getElementById('gcp-exp-txt').addEventListener('click', () => {
         if (!requireCaptured()) return;
         download(formatTxt(STATE.capturedData), `chatgpt_${timestamp()}.txt`, 'text/plain;charset=utf-8');
-        expStatus.textContent = '✔ TXT 下載中…';
-        expStatus.className = 'gcp-status gcp-ok';
+        setStatus(expStatus, '✔ TXT 下載中…', 'ok');
       });
 
-      // ── 匯出 HTML ──
       document.getElementById('gcp-exp-html').addEventListener('click', () => {
         if (!requireCaptured()) return;
         download(formatHtml(STATE.capturedData), `chatgpt_${timestamp()}.html`, 'text/html;charset=utf-8');
-        expStatus.textContent = '✔ HTML 下載中…';
-        expStatus.className = 'gcp-status gcp-ok';
+        setStatus(expStatus, '✔ HTML 下載中…', 'ok');
       });
 
-      // ── 匯出剪貼簿 ──
       document.getElementById('gcp-exp-clip').addEventListener('click', async () => {
         if (!requireCaptured()) return;
         const txt = formatTxt(STATE.capturedData);
         try {
           await navigator.clipboard.writeText(txt);
-          expStatus.textContent = '✔ 已複製到剪貼簿';
+          setStatus(expStatus, '✔ 已複製到剪貼簿', 'ok');
         } catch {
           const ta = Object.assign(document.createElement('textarea'), {
             value: txt, style: 'position:fixed;opacity:0;top:0;left:0;',
@@ -584,14 +643,21 @@
           ta.select();
           document.execCommand('copy');
           document.body.removeChild(ta);
-          expStatus.textContent = '✔ 已複製（降級模式）';
+          setStatus(expStatus, '✔ 已複製（降級模式）', 'ok');
         }
-        expStatus.className = 'gcp-status gcp-ok';
       });
+
+      // 初始化清單高度
+      updateListHeight();
 
     } catch (err) {
       console.error('[GPTCapture] 初始化失敗:', err);
     }
+  }
+
+  function setStatus(el, msg, type) {
+    el.textContent = msg;
+    el.className = 'gcp-status' + (type ? ' gcp-' + type : '');
   }
 
   window.__GPTCapture = {
