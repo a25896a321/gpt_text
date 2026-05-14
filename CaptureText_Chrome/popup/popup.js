@@ -1,5 +1,10 @@
 'use strict';
 
+// ── Pinned-window detection ────────────────────────────────────────────────────
+// When alwaysOnTop is enabled, popup.js opens a chrome.windows.create popup with
+// ?pin=1 so we know NOT to pop out again on that second load.
+const IS_PINNED = new URLSearchParams(location.search).get('pin') === '1';
+
 // ── Default config ─────────────────────────────────────────────────────────────
 const CFG_DEFAULTS = {
   selector:         '[data-message-author-role]',
@@ -13,6 +18,7 @@ const CFG_DEFAULTS = {
   xlsCleanTargets:  '標題：',
   showIndex:        true,
   autoExport:       true,   // auto-download after scan
+  alwaysOnTop:      true,   // open as persistent window by default
 };
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
@@ -54,28 +60,10 @@ let currentRoles = ['user', 'assistant'];  // kept in sync with cfg.targetRoles
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function setFooter(msg) { elFooter.textContent = msg; }
 
-// Get the webpage tab that was active when the user clicked the extension icon.
-// Running as a chrome.windows.create popup means currentWindow is the popup
-// itself (type:'popup', no normal tabs), so we must use the stored target tab.
-async function getActiveTab() {
-  try {
-    const stored = await chrome.storage.session.get('gct_target_tab');
-    if (stored.gct_target_tab) {
-      const tab = await chrome.tabs.get(stored.gct_target_tab);
-      if (tab) return tab;
-    }
-  } catch {}
-  // Fallback: active tab in any normal window
-  const [tab] = await chrome.tabs.query({ active: true, windowType: 'normal' });
-  return tab || null;
-}
-
 async function sendToContent(payload) {
   try {
-    const tab = await getActiveTab();
-    if (!tab) throw new Error('找不到目標頁面，請先開啟目標網頁再點擊擴充元件');
-    currentTabId = tab.id;
-    return await chrome.tabs.sendMessage(tab.id, { ...payload, config: buildConfig() });
+    if (!currentTabId) throw new Error('找不到目標頁面，請先開啟目標網頁再點擊擴充元件');
+    return await chrome.tabs.sendMessage(currentTabId, { ...payload, config: buildConfig() });
   } catch (e) {
     setFooter('無法與頁面通訊：' + e.message);
     return null;
@@ -350,7 +338,7 @@ elBtnBatchStart.addEventListener('click', async () => {
   elBatchStatus.textContent  = `批量啟動中，共 ${urls.length} 頁…`;
   setFooter(`批量掃描：0 / ${urls.length}`);
 
-  const res = await sendToBg({ type: 'START_BATCH', urls, config: buildConfig() });
+  const res = await sendToBg({ type: 'START_BATCH', urls, config: buildConfig(), tabId: currentTabId });
   if (res?.ok) {
     monitorBatch(res.total);
   } else {
@@ -436,6 +424,7 @@ function applySettingsToUI() {
   $('cfg-xlsCleanTargets').value = cfg.xlsCleanTargets;
   $('cfg-showIndex').checked     = cfg.showIndex;
   $('cfg-autoExport').checked    = cfg.autoExport !== false;
+  $('cfg-alwaysOnTop').checked   = cfg.alwaysOnTop !== false;
 
   // Rebuild role-dependent UI elements, passing saved defaultSelection to preserve it
   updateRoleUI(cfg.defaultSelection);
@@ -454,6 +443,7 @@ function readSettingsFromUI() {
     xlsCleanTargets:  $('cfg-xlsCleanTargets').value.trim(),
     showIndex:        $('cfg-showIndex').checked,
     autoExport:       $('cfg-autoExport').checked,
+    alwaysOnTop:      $('cfg-alwaysOnTop').checked,
   };
 }
 
@@ -473,8 +463,49 @@ $('btn-reset-cfg').addEventListener('click', async () => {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
+  await loadSettings();
+
+  // ── Show / hide pin indicator ──────────────────────────────────────────────
+  const pinEl = $('pin-indicator');
+  if (pinEl) pinEl.classList.toggle('hidden', !IS_PINNED);
+
+  // ── Auto-popout if alwaysOnTop is on and we're in the normal popup ─────────
+  // IS_PINNED = false means we're the standard default_popup.
+  // IS_PINNED = true  means we're already the persistent window — skip.
+  if (cfg.alwaysOnTop && !IS_PINNED) {
+    // Capture the active tab BEFORE we close this popup
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab) await chrome.storage.session.set({ gct_target_tab: tab.id });
+    } catch {}
+    // Open a persistent popup window (screen is available here in popup context)
+    try {
+      await chrome.windows.create({
+        url:     chrome.runtime.getURL('popup/popup.html?pin=1'),
+        type:    'popup',
+        width:   400,
+        height:  670,
+        top:     60,
+        left:    Math.max(0, screen.availWidth - 430),
+        focused: true,
+      });
+    } catch {}
+    window.close();
+    return;
+  }
+
+  // ── Resolve target tab ─────────────────────────────────────────────────────
   try {
-    const tab = await getActiveTab();
+    let tab;
+    if (IS_PINNED) {
+      // We were opened by the popout logic — use the stored tab ID
+      const stored = await chrome.storage.session.get('gct_target_tab');
+      if (stored.gct_target_tab) tab = await chrome.tabs.get(stored.gct_target_tab);
+    } else {
+      // Standard popup: currentWindow correctly refers to the browser window
+      const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
+      tab = t;
+    }
     if (tab) {
       currentTabId = tab.id;
       elPageTitle.textContent = tab.title || '未知頁面';
@@ -482,9 +513,7 @@ async function init() {
     }
   } catch {}
 
-  await loadSettings();
-
-  // Restore tab state if previously scanned (pass tabId explicitly)
+  // ── Restore previous scan state ────────────────────────────────────────────
   const state = await sendToBg({ type: 'GET_TAB_STATE', tabId: currentTabId });
   if (state?.status === 'done' && state.summaries?.length) {
     summaries = state.summaries;
@@ -494,7 +523,7 @@ async function init() {
     setFooter(`已載入上次掃描結果（${summaries.length} 則）`);
   }
 
-  // Resume batch UI if still running
+  // ── Resume batch UI if still running ──────────────────────────────────────
   const bRes  = await sendToBg({ type: 'GET_BATCH_STATE' });
   const batch = bRes?.batch;
   if (batch && !batch.done) {
@@ -508,23 +537,9 @@ async function init() {
   }
 }
 
-// ── Close button: close the popup window ─────────────────────────────────────
+// ── Close button ──────────────────────────────────────────────────────────────
 document.getElementById('btn-close-panel')?.addEventListener('click', () => {
   window.close();
-});
-
-// ── Refresh target tab info when extension icon is clicked again ──────────────
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === '_REFRESH_TARGET') {
-    getActiveTab().then(tab => {
-      if (tab) {
-        currentTabId = tab.id;
-        elPageTitle.textContent = tab.title || '未知頁面';
-        elPageTitle.title       = tab.url   || '';
-        setFooter(`已切換至：${tab.title || tab.url}`);
-      }
-    });
-  }
 });
 
 init();

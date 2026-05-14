@@ -12,7 +12,8 @@
   <img src="../icons/CaptureText_icon.png" class="hdr-icon" alt="">
   <span class="hdr-title">文字捕獲工具</span>
   <span class="hdr-ver">v1.0.0</span>
-  <button id="btn-close-panel" class="hdr-close" title="關閉視窗">✕</button>
+  <span id="pin-indicator" class="pin-indicator hidden" title="置頂模式">📌</span>
+  <button id="btn-close-panel" class="hdr-close" title="關閉">✕</button>
 </header>
 
 <!-- ── Tab buttons ────────────────────────────────────────────────────────── -->
@@ -156,6 +157,10 @@
   <div class="field row gap-8">
     <label class="lbl">自動匯出（掃描完成後立即下載）</label>
     <input id="cfg-autoExport" type="checkbox" checked>
+  </div>
+  <div class="field row gap-8">
+    <label class="lbl">介面置頂<small>（開啟後點擊網頁不會關閉面板）</small></label>
+    <input id="cfg-alwaysOnTop" type="checkbox" checked>
   </div>
 
   <div class="row mt-8 gap-6">

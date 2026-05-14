@@ -56,6 +56,7 @@ body {
   transition: background .15s, color .15s;
 }
 .hdr-close:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+.pin-indicator { font-size: 13px; opacity: .7; cursor: default; }
 
 /* ── Tabs ──────────────────────────────────────────────────────────────── */
 .tabs {
