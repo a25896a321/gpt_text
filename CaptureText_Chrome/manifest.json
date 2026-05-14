@@ -9,12 +9,11 @@
     "128": "icons/CaptureText_icon_128.png"
   },
   "action": {
-    "default_popup": "popup/popup.html",
-    "default_icon":  {
+    "default_icon": {
       "16": "icons/CaptureText_icon_16.png",
       "48": "icons/CaptureText_icon.png"
     },
-    "default_title": "文字捕獲工具"
+    "default_title": "文字捕獲工具（點擊開啟/關閉面板）"
   },
   "background": {
     "service_worker": "background/service_worker.js"

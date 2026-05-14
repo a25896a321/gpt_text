@@ -1,5 +1,21 @@
 'use strict';
 
+// ── Extension icon click → toggle floating panel ──────────────────────────────
+chrome.action.onClicked.addListener(async (tab) => {
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_PANEL' });
+  } catch {
+    // Content script not yet active on this page (e.g. fresh tab) — inject first
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/content.js'] });
+      await chrome.scripting.insertCSS(   { target: { tabId: tab.id }, files: ['content/content.css'] });
+      setTimeout(async () => {
+        try { await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_PANEL' }); } catch {}
+      }, 400);
+    } catch {}
+  }
+});
+
 // ── Storage helpers ────────────────────────────────────────────────────────────
 const BATCH_KEY  = 'gct_batch';
 const TAB_PREFIX = 'gct_tab_';

@@ -40,6 +40,22 @@ body {
 .hdr-icon  { width: 22px; height: 22px; object-fit: contain; border-radius: 4px; }
 .hdr-title { font-weight: 700; font-size: .96em; flex: 1; }
 .hdr-ver   { font-size: .72em; color: var(--muted); }
+.hdr-close {
+  background: transparent;
+  border: 1px solid rgba(220,38,38,.4);
+  color: #dc2626;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s, color .15s;
+}
+.hdr-close:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
 
 /* ── Tabs ──────────────────────────────────────────────────────────────── */
 .tabs {

@@ -139,3 +139,93 @@ mark.gct-hl {
   border-radius: 2px;
   padding: 0 1px;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Floating control panel (iframe wrapper)
+   ════════════════════════════════════════════════════════════════════════════ */
+#gct-panel-wrap {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: 384px;
+  z-index: 2147483646;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 12px 48px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.06);
+  border: 1px solid #2e3a55;
+  user-select: none;
+  transition: opacity .2s cubic-bezier(.4,0,.2,1), transform .2s cubic-bezier(.4,0,.2,1);
+}
+#gct-panel-wrap.gct-panel-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-12px) scale(.97);
+}
+
+/* ── Drag bar ────────────────────────────────────────────────────────────── */
+#gct-drag-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 5px 8px;
+  background: #0f172a;
+  cursor: move;
+  border-bottom: 1px solid #1e2d45;
+  flex-shrink: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", sans-serif;
+  font-size: 12px;
+}
+#gct-drag-bar-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: contain;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.gct-drag-title {
+  flex: 1;
+  font-weight: 600;
+  color: #cbd5e1;
+  font-size: 11px;
+  letter-spacing: .04em;
+  pointer-events: none;
+}
+.gct-drag-grip {
+  color: #4a5568;
+  font-size: 15px;
+  letter-spacing: -2px;
+  pointer-events: none;
+}
+#gct-panel-close-btn {
+  background: transparent;
+  border: 1px solid rgba(231,76,60,.4);
+  color: #e74c3c;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background .15s, color .15s;
+}
+#gct-panel-close-btn:hover {
+  background: #c0392b;
+  border-color: #c0392b;
+  color: #fff;
+}
+
+/* ── Iframe ───────────────────────────────────────────────────────────────── */
+#gct-panel-iframe {
+  width: 100%;
+  height: 590px;
+  border: none;
+  display: block;
+  background: #1a1a2e;
+}

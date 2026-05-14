@@ -1,5 +1,16 @@
 'use strict';
 
+// ── Embedded mode: hide popup header when running inside the iframe panel ──────
+(function () {
+  if (window.self !== window.top) {
+    // Running inside content-script iframe — hide redundant header
+    document.addEventListener('DOMContentLoaded', () => {
+      const hdr = document.querySelector('.hdr');
+      if (hdr) hdr.style.display = 'none';
+    });
+  }
+})();
+
 // ── Default config ─────────────────────────────────────────────────────────────
 const CFG_DEFAULTS = {
   selector:         '[data-message-author-role]',
@@ -433,5 +444,15 @@ async function init() {
     monitorBatch(batch.total);
   }
 }
+
+// ── Close button (visible when NOT in embedded iframe mode) ───────────────────
+document.getElementById('btn-close-panel')?.addEventListener('click', () => {
+  // If inside iframe, tell parent content script to hide the panel
+  if (window.self !== window.top) {
+    window.parent.postMessage({ type: 'GCT_CLOSE' }, '*');
+  } else {
+    window.close(); // standalone window fallback
+  }
+});
 
 init();
