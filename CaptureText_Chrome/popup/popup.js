@@ -492,10 +492,10 @@ async function init() {
       const win = await chrome.windows.create({
         url:     chrome.runtime.getURL('popup/popup.html?pin=1'),
         type:    'popup',
-        width:   500,
-        height:  820,
-        top:     40,
-        left:    Math.max(0, screen.availWidth - 520),
+        width:   400,
+        height:  620,
+        top:     60,
+        left:    Math.max(0, screen.availWidth - 420),
         focused: true,
       });
       await chrome.storage.session.set({ gct_popup_win: win.id });
@@ -504,9 +504,8 @@ async function init() {
     return;
   }
 
-  // ── Pinned window: apply larger body, show 📌, hide close btn ─────────────
+  // ── Pinned window: show 📌, hide close btn ────────────────────────────────
   if (IS_PINNED) {
-    document.body.classList.add('pinned');
     const pinEl  = $('pin-indicator');
     const closeEl = $('btn-close-panel');
     if (pinEl)   pinEl.classList.remove('hidden');
