@@ -492,7 +492,7 @@ async function init() {
       const win = await chrome.windows.create({
         url:     chrome.runtime.getURL('popup/popup.html?pin=1'),
         type:    'popup',
-        width:   400,
+        width:   500,
         height:  620,
         top:     60,
         left:    Math.max(0, screen.availWidth - 420),
