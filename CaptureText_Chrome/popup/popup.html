@@ -11,8 +11,9 @@
 <header class="hdr">
   <img src="../icons/CaptureText_icon.png" class="hdr-icon" alt="">
   <span class="hdr-title">文字捕獲工具</span>
-  <span class="hdr-ver">v1.0.1</span>
-  <span id="pin-indicator" class="pin-indicator hidden" title="置頂模式">📌</span>
+  <span class="hdr-ver">v1.0.2</span>
+  <!-- 📌 acts as always-on-top toggle (dimmed=off, bright=on) -->
+  <button id="btn-pin-toggle" class="btn-pin" title="置頂：關閉（點擊切換）">📌</button>
   <button id="btn-close-panel" class="hdr-close" title="關閉">✕</button>
 </header>
 
@@ -29,27 +30,23 @@
      ══════════════════════════════════════════════════════════════════════════ -->
 <section id="tab-scan" class="tab-panel active">
 
-  <!-- Feature 2: current page info with label + refresh button -->
   <div class="page-info-row">
     <span class="page-info-lbl">當前讀取的頁面標題</span>
     <span id="page-title" class="page-title" title="">正在讀取頁面…</span>
     <button id="btn-refresh-tab" class="btn btn-xs btn-ghost" title="重新整理頁面標題">🔄</button>
   </div>
 
-  <!-- Scan controls -->
   <div class="row gap-6">
     <button id="btn-scan"      class="btn btn-primary flex-1">🔍 掃描</button>
     <button id="btn-stop-scan" class="btn btn-danger"  disabled>⏹ 停止</button>
     <button id="btn-sidebar"   class="btn btn-ghost"   disabled title="開啟 / 關閉側邊閱讀模式">📖</button>
   </div>
 
-  <!-- Progress bar -->
   <div id="scan-progress-wrap" class="progress-wrap hidden">
     <div id="scan-progress-bar" class="progress-bar" style="width:0%"></div>
   </div>
   <div id="scan-status" class="status-line">尚未掃描</div>
 
-  <!-- Quick-select shortcuts -->
   <div class="row gap-4 mt-4">
     <button class="btn btn-xs btn-blue"  id="qs-role0">僅選 role0</button>
     <button class="btn btn-xs btn-green" id="qs-role1">僅選 role1</button>
@@ -57,17 +54,14 @@
     <button class="btn btn-xs btn-ghost" id="qs-none">清除</button>
   </div>
 
-  <!-- Message list -->
   <div id="msg-list" class="msg-list hidden"></div>
   <div id="msg-empty" class="empty-hint">請先點擊「掃描」</div>
 
-  <!-- Selection summary + confirm -->
   <div id="capture-bar" class="capture-bar hidden">
     <span id="sel-count">已選 0 筆</span>
     <button id="btn-capture" class="btn btn-primary btn-sm">⚡ 確認選取</button>
   </div>
 
-  <!-- Export row -->
   <div id="export-row" class="export-row hidden">
     <span class="export-label">匯出：</span>
     <button class="btn btn-xs btn-export" data-fmt="txt">TXT</button>
@@ -126,7 +120,7 @@
   </div>
   <div class="field">
     <label class="lbl">捲動延遲 200~3000（ms）</label>
-    <input id="cfg-scrollDelay" class="input" type="number" min="200" max="3000" step="100" value="500">
+    <input id="cfg-scrollDelay" class="input" type="number" min="200" max="3000" step="50" value="350">
   </div>
   <div class="field">
     <label class="lbl">預設選取<small>（選項跟隨目標角色自動產生）</small></label>
@@ -148,7 +142,6 @@
     </select>
   </div>
 
-  <!-- Feature 3: filename template with tokens -->
   <div class="field">
     <label class="lbl">自訂檔名模板
       <small>（$D=yyyymmdd / $T=hhmm / $Ts=hhmmss / $M=總筆數(XLS) / $K=處理後筆數(XLS)；留空=頁面標題）</small>
@@ -161,15 +154,21 @@
     <input id="cfg-downloadSubfolder" class="input" type="text" placeholder="例：GPT_captures">
   </div>
 
+  <!-- ── XLS 資料處理 ── -->
+  <div class="settings-group-title">XLS 資料處理</div>
+
+  <!-- exportRole above showIndex -->
   <div class="field row gap-8">
     <label class="lbl">匯出角色欄位<small>（關閉後匯出內容不含角色ID）</small></label>
     <input id="cfg-exportRole" type="checkbox">
   </div>
 
-  <!-- ── XLS 設定 ── -->
-  <div class="settings-group-title">XLS 資料處理</div>
+  <div class="field row gap-8">
+    <label class="lbl">顯示序號<small>（僅 XLS 有效）</small></label>
+    <input id="cfg-showIndex" type="checkbox">
+  </div>
 
-  <!-- Feature 1: prefix/suffix extraction -->
+  <!-- XLS first-column extraction -->
   <div class="field">
     <label class="lbl">XLS 首欄抓取目標<small>（前綴+後綴包圍的內容獨立為第一欄；全部留空則不分割）</small></label>
     <div class="row gap-4">
@@ -181,6 +180,20 @@
       <label class="lbl">後綴後方包含換行</label>
       <input id="cfg-xlsSuffixNewline" type="checkbox" checked>
     </div>
+    <div class="field row gap-8 mt-2">
+      <label class="lbl">匹配前後綴時包括空格<small>（如「|標題：」與「| 標題：」視為相同）</small></label>
+      <input id="cfg-xlsPrefixTrimSpaces" type="checkbox">
+    </div>
+  </div>
+
+  <!-- Min chars ABOVE clean targets -->
+  <div class="field row gap-8">
+    <label class="lbl">將 XLS 字數不足的儲存格刪除</label>
+    <input id="cfg-xlsMinCellCharsEnabled" type="checkbox">
+  </div>
+  <div class="field">
+    <label class="lbl">最低字數門檻（字元數）</label>
+    <input id="cfg-xlsMinCellChars" class="input" type="number" min="1" max="99999" value="300">
   </div>
 
   <div class="field">
@@ -188,23 +201,11 @@
     <input id="cfg-xlsCleanTargets" class="input" type="text" value="標題：">
   </div>
 
-  <!-- Feature 4: keyword row exclusion -->
   <div class="field">
     <label class="lbl">XLS 排除關鍵字目標行（換行分隔）<br><small>包含此關鍵字的行將整行刪除</small></label>
     <textarea id="cfg-xlsExcludeLines" class="textarea" rows="5"></textarea>
   </div>
 
-  <!-- Feature 5: minimum cell chars -->
-  <div class="field row gap-8">
-    <label class="lbl">將 XLS 字數不足的儲存格刪除</label>
-    <input id="cfg-xlsMinCellCharsEnabled" type="checkbox">
-  </div>
-  <div class="field">
-    <label class="lbl">最低字數門檻（字元數）</label>
-    <input id="cfg-xlsMinCellChars" class="input" type="number" min="1" max="9999" value="10">
-  </div>
-
-  <!-- Feature 7: anomaly marker -->
   <div class="field row gap-8">
     <label class="lbl">保留 XLS 異常標記之內容<small>（在最後一欄標示刪除或清除原因）</small></label>
     <input id="cfg-xlsKeepAnomalyMarker" type="checkbox">
@@ -214,16 +215,8 @@
   <div class="settings-group-title">介面設定</div>
 
   <div class="field row gap-8">
-    <label class="lbl">顯示序號</label>
-    <input id="cfg-showIndex" type="checkbox" checked>
-  </div>
-  <div class="field row gap-8">
     <label class="lbl">自動匯出（掃描完成後立即下載）</label>
     <input id="cfg-autoExport" type="checkbox" checked>
-  </div>
-  <div class="field row gap-8">
-    <label class="lbl">介面置頂<small>（開啟後點擊網頁不會關閉面板）</small></label>
-    <input id="cfg-alwaysOnTop" type="checkbox" checked>
   </div>
 
   <div class="row mt-8 gap-6">

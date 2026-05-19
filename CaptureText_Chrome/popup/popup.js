@@ -13,7 +13,7 @@ const CFG_DEFAULTS = {
   selector:               '[data-message-author-role]',
   roleAttr:               'data-message-author-role',
   targetRoles:            'assistant,user',
-  scrollDelay:            600,
+  scrollDelay:            350,
   defaultSelection:       'assistant',
   exportFormat:           'xls',
   exportFilename:         '',            // supports $D $T $Ts $M $K tokens
@@ -23,16 +23,17 @@ const CFG_DEFAULTS = {
   xlsPrefix:              '|標題：',
   xlsSuffix:              '|',
   xlsSuffixNewline:       true,
+  xlsPrefixTrimSpaces:    false,        // allow spaces between prefix/suffix chars
   // XLS: remove exact substrings
   xlsCleanTargets:        '標題：',
   // XLS: remove lines containing keywords (newline-separated)
   xlsExcludeLines:        XLS_EXCLUDE_DEFAULT,
   // XLS: minimum cell chars
   xlsMinCellCharsEnabled: false,
-  xlsMinCellChars:        10,
+  xlsMinCellChars:        300,
   // XLS: anomaly marker column
   xlsKeepAnomalyMarker:   false,
-  showIndex:              true,
+  showIndex:              false,
   autoExport:             true,
   alwaysOnTop:            true,
 };
@@ -107,8 +108,9 @@ function buildConfig() {
     xlsSuffixNewline:       cfg.xlsSuffixNewline !== false,
     xlsCleanTargets:        cfg.xlsCleanTargets.split(',').map(s => s.trim()).filter(Boolean),
     xlsExcludeLines:        cfg.xlsExcludeLines.split('\n').map(s => s.trim()).filter(Boolean),
+    xlsPrefixTrimSpaces:    cfg.xlsPrefixTrimSpaces === true,
     xlsMinCellCharsEnabled: cfg.xlsMinCellCharsEnabled === true,
-    xlsMinCellChars:        Number(cfg.xlsMinCellChars) || 10,
+    xlsMinCellChars:        Number(cfg.xlsMinCellChars) || 300,
     xlsKeepAnomalyMarker:   cfg.xlsKeepAnomalyMarker === true,
     showIndex:              cfg.showIndex,
     autoExport:             cfg.autoExport !== false,
@@ -253,26 +255,96 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
+// ── Helper: resolve the target tab robustly ───────────────────────────────────
+async function resolveTargetTab() {
+  let tab = null;
+  if (IS_PINNED) {
+    try {
+      const s = await chrome.storage.session.get('gct_target_tab');
+      if (s.gct_target_tab) tab = await chrome.tabs.get(s.gct_target_tab);
+    } catch {}
+  } else {
+    try {
+      const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
+      tab = t;
+    } catch {}
+  }
+  // Fallback: last focused normal window's active tab
+  if (!tab) {
+    try {
+      const [t] = await chrome.tabs.query({ active: true, windowType: 'normal', lastFocusedWindow: true });
+      tab = t;
+    } catch {}
+  }
+  return tab;
+}
+
 // ── Refresh tab info button ───────────────────────────────────────────────────
 $('btn-refresh-tab').addEventListener('click', async () => {
   try {
-    let tab;
-    if (IS_PINNED) {
-      const s = await chrome.storage.session.get('gct_target_tab');
-      if (s.gct_target_tab) tab = await chrome.tabs.get(s.gct_target_tab);
-    } else {
-      const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
-      tab = t;
-    }
+    // Always query the last focused normal window so pinned mode also works
+    const [tab] = await chrome.tabs.query({ active: true, windowType: 'normal', lastFocusedWindow: true });
     if (tab) {
       currentTabId = tab.id;
       elPageTitle.textContent = tab.title || '未知頁面';
       elPageTitle.title       = tab.url   || '';
+      if (IS_PINNED) await chrome.storage.session.set({ gct_target_tab: tab.id }).catch(() => {});
       setFooter('頁面資訊已更新：' + (tab.title || tab.url));
+    } else {
+      setFooter('無法取得頁面資訊');
     }
   } catch (e) {
     setFooter('重新整理失敗：' + e.message);
   }
+});
+
+// ── Pin toggle button ─────────────────────────────────────────────────────────
+function updatePinButton() {
+  const btn = $('btn-pin-toggle');
+  if (!btn) return;
+  const active = cfg.alwaysOnTop !== false;
+  btn.classList.toggle('pin-active', active);
+  btn.title = `置頂：${active ? '開啟' : '關閉'}（點擊切換）`;
+}
+
+$('btn-pin-toggle')?.addEventListener('click', async () => {
+  cfg.alwaysOnTop = !cfg.alwaysOnTop;
+  // Persist immediately
+  const stored = await chrome.storage.sync.get('gct_cfg').catch(() => ({}));
+  const saved  = { ...(stored.gct_cfg || {}), alwaysOnTop: cfg.alwaysOnTop };
+  await chrome.storage.sync.set({ gct_cfg: saved }).catch(() => {});
+  updatePinButton();
+
+  if (cfg.alwaysOnTop && !IS_PINNED) {
+    // Re-open as pinned window
+    try {
+      await chrome.storage.session.set({ gct_target_tab: currentTabId });
+    } catch {}
+    const stored2 = await chrome.storage.session.get('gct_popup_win').catch(() => ({}));
+    if (stored2.gct_popup_win) {
+      try {
+        await chrome.windows.update(stored2.gct_popup_win, { focused: true });
+        window.close();
+        return;
+      } catch {}
+    }
+    try {
+      const win = await chrome.windows.create({
+        url:     chrome.runtime.getURL('popup/popup.html?pin=1'),
+        type:    'popup',
+        width:   500,
+        height:  620,
+        top:     60,
+        left:    Math.max(0, screen.availWidth - 420),
+        focused: true,
+      });
+      await chrome.storage.session.set({ gct_popup_win: win.id });
+    } catch {}
+    window.close();
+    return;
+  }
+
+  setFooter(`置頂已${cfg.alwaysOnTop ? '開啟，下次點擊圖示生效' : '關閉，下次點擊圖示生效'}`);
 });
 
 // ── Render message list ────────────────────────────────────────────────────────
@@ -336,6 +408,10 @@ function setSelection(pred) {
 // ── Scan ──────────────────────────────────────────────────────────────────────
 elBtnScan.addEventListener('click', async () => {
   if (scanning) return;
+  if (!currentTabId) {
+    setFooter('找不到目標頁面，請先點擊🔄重新整理');
+    return;
+  }
   scanning = true;
   elBtnScan.disabled = true;
   elBtnStop.disabled = false;
@@ -343,6 +419,14 @@ elBtnScan.addEventListener('click', async () => {
   elProgressBar.style.width = '0%';
   elScanStatus.textContent  = '掃描中…';
   setFooter('掃描中，請稍候…');
+
+  // Ensure content script is loaded (handles freshly-opened / post-update tabs)
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: currentTabId },
+      files:  ['content/content.js'],
+    });
+  } catch { /* already injected or restricted page – proceed anyway */ }
 
   const storageKey = 'gct_tab_' + currentTabId;
   const watcher = changes => {
@@ -536,15 +620,16 @@ function applySettingsToUI() {
   $('cfg-xlsPrefix').value             = cfg.xlsPrefix;
   $('cfg-xlsSuffix').value             = cfg.xlsSuffix;
   $('cfg-xlsSuffixNewline').checked    = cfg.xlsSuffixNewline !== false;
+  $('cfg-xlsPrefixTrimSpaces').checked = cfg.xlsPrefixTrimSpaces === true;
   $('cfg-xlsCleanTargets').value       = cfg.xlsCleanTargets;
   $('cfg-xlsExcludeLines').value       = cfg.xlsExcludeLines;
   $('cfg-xlsMinCellCharsEnabled').checked = cfg.xlsMinCellCharsEnabled === true;
   $('cfg-xlsMinCellChars').value       = cfg.xlsMinCellChars;
   $('cfg-xlsKeepAnomalyMarker').checked = cfg.xlsKeepAnomalyMarker === true;
-  $('cfg-showIndex').checked           = cfg.showIndex;
+  $('cfg-showIndex').checked           = cfg.showIndex === true;
   $('cfg-autoExport').checked          = cfg.autoExport !== false;
-  $('cfg-alwaysOnTop').checked         = cfg.alwaysOnTop !== false;
   updateRoleUI(cfg.defaultSelection);
+  updatePinButton();
 }
 
 function readSettingsFromUI() {
@@ -552,7 +637,7 @@ function readSettingsFromUI() {
     selector:               $('cfg-selector').value.trim(),
     roleAttr:               $('cfg-roleAttr').value.trim(),
     targetRoles:            $('cfg-targetRoles').value.trim(),
-    scrollDelay:            Number($('cfg-scrollDelay').value) || 600,
+    scrollDelay:            Number($('cfg-scrollDelay').value) || 350,
     defaultSelection:       $('cfg-defaultSelection').value,
     exportFormat:           $('cfg-exportFormat').value,
     exportFilename:         $('cfg-exportFilename').value.trim(),
@@ -561,14 +646,15 @@ function readSettingsFromUI() {
     xlsPrefix:              $('cfg-xlsPrefix').value,
     xlsSuffix:              $('cfg-xlsSuffix').value,
     xlsSuffixNewline:       $('cfg-xlsSuffixNewline').checked,
+    xlsPrefixTrimSpaces:    $('cfg-xlsPrefixTrimSpaces').checked,
     xlsCleanTargets:        $('cfg-xlsCleanTargets').value.trim(),
     xlsExcludeLines:        $('cfg-xlsExcludeLines').value,
     xlsMinCellCharsEnabled: $('cfg-xlsMinCellCharsEnabled').checked,
-    xlsMinCellChars:        Number($('cfg-xlsMinCellChars').value) || 10,
+    xlsMinCellChars:        Number($('cfg-xlsMinCellChars').value) || 300,
     xlsKeepAnomalyMarker:   $('cfg-xlsKeepAnomalyMarker').checked,
     showIndex:              $('cfg-showIndex').checked,
     autoExport:             $('cfg-autoExport').checked,
-    alwaysOnTop:            $('cfg-alwaysOnTop').checked,
+    alwaysOnTop:            cfg.alwaysOnTop,  // preserved from pin button, not a form field
   };
 }
 
@@ -590,12 +676,22 @@ $('btn-reset-cfg').addEventListener('click', async () => {
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
   await loadSettings();
+  updatePinButton();
 
   // ── Auto-popout if alwaysOnTop ────────────────────────────────────────────
   if (cfg.alwaysOnTop && !IS_PINNED) {
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab) await chrome.storage.session.set({ gct_target_tab: tab.id });
+      // Use active tab from current window (standard popup context) or last focused normal window
+      let tabForPin = null;
+      try {
+        const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
+        tabForPin = t;
+      } catch {}
+      if (!tabForPin) {
+        const [t] = await chrome.tabs.query({ active: true, windowType: 'normal', lastFocusedWindow: true }).catch(() => []);
+        tabForPin = t;
+      }
+      if (tabForPin) await chrome.storage.session.set({ gct_target_tab: tabForPin.id });
     } catch {}
 
     const stored = await chrome.storage.session.get('gct_popup_win').catch(() => ({}));
@@ -625,29 +721,23 @@ async function init() {
 
   // ── Pinned window setup ───────────────────────────────────────────────────
   if (IS_PINNED) {
-    const pinEl   = $('pin-indicator');
+    document.body.classList.add('pinned');
     const closeEl = $('btn-close-panel');
-    if (pinEl)   pinEl.classList.remove('hidden');
     if (closeEl) closeEl.style.display = 'none';
     window.addEventListener('beforeunload', () => {
       chrome.storage.session.remove('gct_popup_win').catch(() => {});
     });
   }
 
-  // ── Resolve target tab ────────────────────────────────────────────────────
+  // ── Resolve target tab (with fallback) ───────────────────────────────────
   try {
-    let tab;
-    if (IS_PINNED) {
-      const s = await chrome.storage.session.get('gct_target_tab');
-      if (s.gct_target_tab) tab = await chrome.tabs.get(s.gct_target_tab);
-    } else {
-      const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
-      tab = t;
-    }
+    const tab = await resolveTargetTab();
     if (tab) {
       currentTabId = tab.id;
       elPageTitle.textContent = tab.title || '未知頁面';
       elPageTitle.title       = tab.url   || '';
+      // Keep session storage in sync for pinned window
+      if (IS_PINNED) await chrome.storage.session.set({ gct_target_tab: tab.id }).catch(() => {});
     }
   } catch {}
 

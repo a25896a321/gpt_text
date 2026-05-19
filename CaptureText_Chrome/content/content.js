@@ -22,9 +22,10 @@ const CFG_DEFAULT = {
   xlsExcludeLines:        ['已思考','推理花了','好的','好的！','可以！以下',
                            '新的標題與內容','新的標題與知識','當然可以','http','標題：'],
   xlsMinCellCharsEnabled: false,
-  xlsMinCellChars:        10,
+  xlsMinCellChars:        300,
   xlsKeepAnomalyMarker:   false,        // add marker column for processed cells
   exportRole:             false,        // include role column in output
+  xlsPrefixTrimSpaces:    false,        // allow spaces between prefix/suffix chars
   downloadSubfolder:      '',           // subfolder under browser downloads
   autoExport:             true,
 };
@@ -201,8 +202,12 @@ function processXlsMessage(text, cfg) {
   const prefix = (cfg.xlsPrefix || '').trim();
   const suffix = (cfg.xlsSuffix || '').trim();
   if (prefix || suffix) {
-    const pRe  = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const sRe  = suffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Build regex: if xlsPrefixTrimSpaces, allow optional \s* between each char
+    const escChar = c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const flexEsc = s => s.split('').map(escChar).join('\\s*');
+    const strictEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pRe  = cfg.xlsPrefixTrimSpaces ? flexEsc(prefix) : strictEsc(prefix);
+    const sRe  = cfg.xlsPrefixTrimSpaces ? flexEsc(suffix) : strictEsc(suffix);
     const nlRe = cfg.xlsSuffixNewline ? '\\n?' : '';
     const re   = new RegExp(pRe + '([\\s\\S]*?)' + sRe + nlRe);
     const m    = content.match(re);

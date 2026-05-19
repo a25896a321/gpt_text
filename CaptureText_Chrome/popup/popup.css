@@ -56,7 +56,22 @@ body {
   transition: background .15s, color .15s;
 }
 .hdr-close:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
-.pin-indicator { font-size: 13px; opacity: .7; cursor: default; }
+
+/* 📌 pin toggle button in header */
+.btn-pin {
+  background: transparent;
+  border: none;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 3px;
+  cursor: pointer;
+  opacity: 0.28;
+  transition: opacity .15s, transform .1s;
+  flex-shrink: 0;
+}
+.btn-pin.pin-active          { opacity: 1; }
+.btn-pin:hover               { opacity: 0.6; }
+.btn-pin.pin-active:hover    { opacity: 0.8; }
 
 /* ── Tabs ──────────────────────────────────────────────────────────────── */
 .tabs {
@@ -81,7 +96,8 @@ body {
 /* ── Tab panels ────────────────────────────────────────────────────────── */
 .tab-panel { padding: 12px 14px; }
 .tab-panel.hidden { display: none; }
-#tab-settings { max-height: calc(100vh - 108px); overflow-y: auto; }
+/* In pinned window (fixed height) the settings tab must scroll; in standard popup let content expand */
+body.pinned #tab-settings { max-height: calc(100vh - 108px); overflow-y: auto; }
 
 /* ── Page info row (Feature 2) ──────────────────────────────────────────── */
 .page-info-row {
