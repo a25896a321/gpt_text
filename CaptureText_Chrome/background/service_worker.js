@@ -45,13 +45,25 @@ async function dispatch(msg, senderTabId) {
 
     case 'SCAN_DONE': {
       await setTabState(senderTabId, {
-        status:    'done',
-        summaries: msg.summaries,
-        url:       msg.url,
-        title:     msg.title,
+        status:      'done',
+        summaries:   msg.summaries,
+        url:         msg.url,
+        title:       msg.title,
+        exportStats: msg.exportStats || {},
       });
-      const batch = await getBatch();
-      if (batch && !batch.done) await advanceBatch(senderTabId, batch);
+      let batch = await getBatch();
+      if (batch && !batch.done) {
+        batch = {
+          ...batch,
+          completedPages: [...(batch.completedPages || []), {
+            pageNum:     batch.doneIdx + 1,
+            url:         msg.url,
+            title:       msg.title,
+            exportStats: msg.exportStats || {},
+          }],
+        };
+        await advanceBatch(senderTabId, batch);
+      }
       return {};
     }
 

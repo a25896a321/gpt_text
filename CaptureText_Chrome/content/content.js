@@ -313,7 +313,7 @@ function formatXls(messages, cfg) {
   const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
 <head><meta charset="utf-8">
 <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
-<x:Name>捕獲結果</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
+<x:Name>結果</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
 </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
 </head><body><table border="1">${header}${dataRows.join('\n')}</table></body></html>`;
 
@@ -361,7 +361,14 @@ function exportMessages(messages, format, cfg) {
     triggerDownload(result.content, fname, result.mime);
   }
 
-  return { count: messages.length, total: result.total, remaining: result.remaining };
+  return {
+    count:        messages.length,
+    total:        result.total,
+    remaining:    result.remaining,
+    cleanedCells: result.cleanedCells,
+    excludedLines: result.excludedLines,
+    tooShortRows: result.tooShortRows,
+  };
 }
 
 // ── Sidebar reading mode ───────────────────────────────────────────────────────
@@ -473,12 +480,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             selected: STATE.captured.some(c => c.index === m.index),
           }));
 
+          let exportStats = {};
           if (msg.batchMode && STATE.captured.length) {
-            exportMessages(STATE.captured, cfg.exportFormat, cfg);
+            exportStats = exportMessages(STATE.captured, cfg.exportFormat, cfg);
           }
 
           chrome.runtime.sendMessage({
-            type: 'SCAN_DONE', summaries, url: location.href, title: document.title,
+            type: 'SCAN_DONE', summaries, url: location.href, title: document.title, exportStats,
           }).catch(() => {});
 
           sendResponse({ ok: true, count: messages.length });

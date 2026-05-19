@@ -133,7 +133,11 @@ function getLogSummary(l) {
       if (l.total != null) s += ` （原始 ${l.total}，處理後 ${l.remaining}）`;
       return s;
     }
-    case 'batch':  return `🔗 批量 · 第 ${l.page}/${l.total} 頁 · ${l.count} 則`;
+    case 'batch': {
+      const xstats = l.xlsTotal != null ? `（原始 ${l.xlsTotal}，處理後 ${l.xlsRemaining}）` : '';
+      return `🔗 批量第 ${l.page}/${l.total} 頁 · ${l.count} 則 ${xstats}`.trim();
+    }
+    case 'batch-complete': return `✅ 批量完成 · 共 ${l.total} 頁`;
     case 'error':  return `⚠ 錯誤：${l.message}`;
     case 'config': return `⚙ ${l.message}`;
     default:       return JSON.stringify(l).slice(0, 100);
@@ -161,8 +165,16 @@ function getLogDetails(l) {
       if (l.tooShortRows  != null) lines.push(`字數不足刪除：${l.tooShortRows} 筆`);
       break;
     case 'batch':
-      lines.push(`頁數：第 ${l.page} / ${l.total} 頁`);
-      lines.push(`匯出筆數：${l.count}`);
+      lines.push(`批量頁數：第 ${l.page} / ${l.total} 頁`);
+      lines.push(`訊息筆數：${l.count}`);
+      if (l.xlsTotal      != null) lines.push(`原始筆數：${l.xlsTotal}`);
+      if (l.xlsRemaining  != null) lines.push(`處理後筆數：${l.xlsRemaining}`);
+      if (l.cleanedCells  != null) lines.push(`清除字串儲存格：${l.cleanedCells} 個`);
+      if (l.excludedLines != null) lines.push(`排除關鍵字行：${l.excludedLines} 行`);
+      if (l.tooShortRows  != null) lines.push(`字數不足刪除：${l.tooShortRows} 筆`);
+      break;
+    case 'batch-complete':
+      lines.push(`共完成 ${l.total} 頁`);
       break;
     case 'error':
       lines.push(`錯誤內容：${l.message}`);
@@ -381,26 +393,9 @@ async function resolveTargetTab() {
   return tab;
 }
 
-// ── Refresh tab info button ───────────────────────────────────────────────────
-$('btn-refresh-tab').addEventListener('click', async () => {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, windowType: 'normal', lastFocusedWindow: true });
-    if (tab) {
-      currentTabId = tab.id;
-      elPageTitle.textContent = tab.title || '未知頁面';
-      elPageTitle.title       = tab.url   || '';
-      if (IS_PINNED) await chrome.storage.session.set({ gct_target_tab: tab.id }).catch(() => {});
-      // Re-inject content script to reset capture state
-      try {
-        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/content.js'] });
-      } catch {}
-      setFooter('頁面已重新整理：' + (tab.title || tab.url));
-    } else {
-      setFooter('無法取得頁面資訊');
-    }
-  } catch (e) {
-    setFooter('重新整理失敗：' + e.message);
-  }
+// ── Restart button: reload the extension popup from scratch ──────────────────
+$('btn-refresh-tab').addEventListener('click', () => {
+  location.reload();
 });
 
 // ── Pin toggle button ─────────────────────────────────────────────────────────
@@ -603,7 +598,6 @@ elBtnCapture.addEventListener('click', async () => {
   const res = await sendToContent({ type: 'SET_SELECTION', indices });
   if (res?.ok) {
     elExportRow.classList.remove('hidden');
-    elBtnSidebar.disabled = false;
     setFooter(`已確認選取 ${indices.length} 則，可進行匯出`);
   }
 });
@@ -660,6 +654,7 @@ function resetBatchUI() {
 }
 
 function monitorBatch(total) {
+  let lastDoneIdx = 0;
   const interval = setInterval(async () => {
     const bRes  = await sendToBg({ type: 'GET_BATCH_STATE' });
     const batch = bRes?.batch;
@@ -673,8 +668,46 @@ function monitorBatch(total) {
       clearInterval(interval);
       resetBatchUI();
       setFooter(`批量完成 ${total} 頁`);
-      addLog({ type: 'batch', page: total, total, count: 0 });
+      // Log any remaining completed pages then final summary
+      const completedPages = batch.completedPages || [];
+      while (lastDoneIdx < completedPages.length) {
+        const p = completedPages[lastDoneIdx++];
+        addLog({
+          type:          'batch',
+          page:          p.pageNum,
+          total,
+          count:         p.exportStats?.count      || 0,
+          xlsTotal:      p.exportStats?.total,
+          xlsRemaining:  p.exportStats?.remaining,
+          cleanedCells:  p.exportStats?.cleanedCells,
+          excludedLines: p.exportStats?.excludedLines,
+          tooShortRows:  p.exportStats?.tooShortRows,
+          url:           p.url,
+          title:         p.title,
+        });
+      }
+      addLog({ type: 'batch-complete', total });
+      await maybeAutoExportLog();
       return;
+    }
+
+    // Log newly completed pages as soon as completedPages array grows
+    const completedPages = batch.completedPages || [];
+    while (lastDoneIdx < done && lastDoneIdx < completedPages.length) {
+      const p = completedPages[lastDoneIdx++];
+      addLog({
+        type:          'batch',
+        page:          p.pageNum,
+        total,
+        count:         p.exportStats?.count      || 0,
+        xlsTotal:      p.exportStats?.total,
+        xlsRemaining:  p.exportStats?.remaining,
+        cleanedCells:  p.exportStats?.cleanedCells,
+        excludedLines: p.exportStats?.excludedLines,
+        tooShortRows:  p.exportStats?.tooShortRows,
+        url:           p.url,
+        title:         p.title,
+      });
     }
 
     const tabRes    = await sendToBg({ type: 'GET_TAB_STATE', tabId: currentTabId });
