@@ -83,6 +83,17 @@ async function dispatch(msg, senderTabId) {
       return {};
     }
 
+    // Batch-mode export with subfolder: content.js can't use chrome.downloads directly,
+    // so it delegates here. Encodes content as a data-URL (works up to ~2 MB).
+    case 'TRIGGER_DOWNLOAD': {
+      const { content, filename, mime } = msg;
+      try {
+        const dataUrl = 'data:' + mime + ',' + encodeURIComponent(content);
+        await chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
+      } catch { /* data too large or permission error – silently ignore */ }
+      return {};
+    }
+
     default: return {};
   }
 }

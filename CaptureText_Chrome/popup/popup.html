@@ -11,7 +11,7 @@
 <header class="hdr">
   <img src="../icons/CaptureText_icon.png" class="hdr-icon" alt="">
   <span class="hdr-title">文字捕獲工具</span>
-  <span class="hdr-ver">v1.0.0</span>
+  <span class="hdr-ver">v1.0.1</span>
   <span id="pin-indicator" class="pin-indicator hidden" title="置頂模式">📌</span>
   <button id="btn-close-panel" class="hdr-close" title="關閉">✕</button>
 </header>
@@ -21,6 +21,7 @@
   <button class="tab-btn active" data-tab="scan">🔍 掃描</button>
   <button class="tab-btn"        data-tab="batch">🔗 批量</button>
   <button class="tab-btn"        data-tab="settings">⚙ 設定</button>
+  <button class="tab-btn"        data-tab="log">📋 日誌</button>
 </nav>
 
 <!-- ══════════════════════════════════════════════════════════════════════════
@@ -28,9 +29,11 @@
      ══════════════════════════════════════════════════════════════════════════ -->
 <section id="tab-scan" class="tab-panel active">
 
-  <!-- Current page info -->
-  <div class="page-info">
+  <!-- Feature 2: current page info with label + refresh button -->
+  <div class="page-info-row">
+    <span class="page-info-lbl">當前讀取的頁面標題</span>
     <span id="page-title" class="page-title" title="">正在讀取頁面…</span>
+    <button id="btn-refresh-tab" class="btn btn-xs btn-ghost" title="重新整理頁面標題">🔄</button>
   </div>
 
   <!-- Scan controls -->
@@ -46,7 +49,7 @@
   </div>
   <div id="scan-status" class="status-line">尚未掃描</div>
 
-  <!-- Quick-select shortcuts (text updated dynamically by JS) -->
+  <!-- Quick-select shortcuts -->
   <div class="row gap-4 mt-4">
     <button class="btn btn-xs btn-blue"  id="qs-role0">僅選 role0</button>
     <button class="btn btn-xs btn-green" id="qs-role1">僅選 role1</button>
@@ -89,7 +92,6 @@
     <button id="btn-batch-cancel" class="btn btn-danger hidden">✕ 取消</button>
   </div>
 
-  <!-- Batch progress -->
   <div id="batch-progress-wrap" class="progress-wrap hidden">
     <div id="batch-progress-bar" class="progress-bar" style="width:0%"></div>
   </div>
@@ -107,6 +109,9 @@
      ══════════════════════════════════════════════════════════════════════════ -->
 <section id="tab-settings" class="tab-panel hidden">
 
+  <!-- ── 掃描設定 ── -->
+  <div class="settings-group-title">掃描設定</div>
+
   <div class="field">
     <label class="lbl">CSS 選擇器</label>
     <input id="cfg-selector" class="input" type="text" value="[data-message-author-role]">
@@ -120,15 +125,19 @@
     <input id="cfg-targetRoles" class="input" type="text" value="assistant,user">
   </div>
   <div class="field">
-    <label class="lbl">捲動延遲200~3000（ms）</label>
+    <label class="lbl">捲動延遲 200~3000（ms）</label>
     <input id="cfg-scrollDelay" class="input" type="number" min="200" max="3000" step="100" value="500">
   </div>
   <div class="field">
     <label class="lbl">預設選取<small>（選項跟隨目標角色自動產生）</small></label>
     <select id="cfg-defaultSelection" class="select">
-      <!-- options rebuilt dynamically by JS based on targetRoles -->
+      <!-- options rebuilt dynamically -->
     </select>
   </div>
+
+  <!-- ── 匯出設定 ── -->
+  <div class="settings-group-title">匯出設定</div>
+
   <div class="field">
     <label class="lbl">自動匯出格式</label>
     <select id="cfg-exportFormat" class="select">
@@ -138,18 +147,72 @@
       <option value="clipboard">剪貼簿</option>
     </select>
   </div>
+
+  <!-- Feature 3: filename template with tokens -->
   <div class="field">
-    <label class="lbl">自訂檔名（空白=頁面標題）</label>
-    <input id="cfg-exportFilename" class="input" type="text" placeholder="留空使用頁面標題">
+    <label class="lbl">自訂檔名模板
+      <small>（$D=yyyymmdd / $T=hhmm / $Ts=hhmmss / $M=總筆數(XLS) / $K=處理後筆數(XLS)；留空=頁面標題）</small>
+    </label>
+    <input id="cfg-exportFilename" class="input" type="text" placeholder="$D$T-$M-$K（留空使用頁面標題）">
   </div>
+
   <div class="field">
-    <label class="lbl">XLS 欄位分隔符</label>
-    <input id="cfg-xlsDelim" class="input" type="text" value="|" maxlength="5">
+    <label class="lbl">下載子資料夾<small>（相對於瀏覽器預設下載路徑；留空=預設位置）</small></label>
+    <input id="cfg-downloadSubfolder" class="input" type="text" placeholder="例：GPT_captures">
   </div>
+
+  <div class="field row gap-8">
+    <label class="lbl">匯出角色欄位<small>（關閉後匯出內容不含角色ID）</small></label>
+    <input id="cfg-exportRole" type="checkbox">
+  </div>
+
+  <!-- ── XLS 設定 ── -->
+  <div class="settings-group-title">XLS 資料處理</div>
+
+  <!-- Feature 1: prefix/suffix extraction -->
   <div class="field">
-    <label class="lbl">XLS 清除目標（逗號分隔）<br><small>從儲存格內容中移除指定字串</small></label>
+    <label class="lbl">XLS 首欄抓取目標<small>（前綴+後綴包圍的內容獨立為第一欄；全部留空則不分割）</small></label>
+    <div class="row gap-4">
+      <input id="cfg-xlsPrefix" class="input" type="text" placeholder="前綴，如 |標題：" style="flex:1">
+      <span style="color:var(--muted);font-size:.8em;flex-shrink:0">…</span>
+      <input id="cfg-xlsSuffix" class="input" type="text" placeholder="後綴，如 |" style="flex:1">
+    </div>
+    <div class="field row gap-8 mt-4">
+      <label class="lbl">後綴後方包含換行</label>
+      <input id="cfg-xlsSuffixNewline" type="checkbox" checked>
+    </div>
+  </div>
+
+  <div class="field">
+    <label class="lbl">XLS 清除目標（逗號分隔）<br><small>從儲存格內容中移除完美匹配的指定字串</small></label>
     <input id="cfg-xlsCleanTargets" class="input" type="text" value="標題：">
   </div>
+
+  <!-- Feature 4: keyword row exclusion -->
+  <div class="field">
+    <label class="lbl">XLS 排除關鍵字目標行（換行分隔）<br><small>包含此關鍵字的行將整行刪除</small></label>
+    <textarea id="cfg-xlsExcludeLines" class="textarea" rows="5"></textarea>
+  </div>
+
+  <!-- Feature 5: minimum cell chars -->
+  <div class="field row gap-8">
+    <label class="lbl">將 XLS 字數不足的儲存格刪除</label>
+    <input id="cfg-xlsMinCellCharsEnabled" type="checkbox">
+  </div>
+  <div class="field">
+    <label class="lbl">最低字數門檻（字元數）</label>
+    <input id="cfg-xlsMinCellChars" class="input" type="number" min="1" max="9999" value="10">
+  </div>
+
+  <!-- Feature 7: anomaly marker -->
+  <div class="field row gap-8">
+    <label class="lbl">保留 XLS 異常標記之內容<small>（在最後一欄標示刪除或清除原因）</small></label>
+    <input id="cfg-xlsKeepAnomalyMarker" type="checkbox">
+  </div>
+
+  <!-- ── 介面設定 ── -->
+  <div class="settings-group-title">介面設定</div>
+
   <div class="field row gap-8">
     <label class="lbl">顯示序號</label>
     <input id="cfg-showIndex" type="checkbox" checked>
@@ -164,8 +227,24 @@
   </div>
 
   <div class="row mt-8 gap-6">
-    <button id="btn-save-cfg"   class="btn btn-primary flex-1">💾 儲存設定</button>
-    <button id="btn-reset-cfg"  class="btn btn-ghost">重置</button>
+    <button id="btn-save-cfg"  class="btn btn-primary flex-1">💾 儲存設定</button>
+    <button id="btn-reset-cfg" class="btn btn-ghost">重置</button>
+  </div>
+
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     TAB: 日誌
+     ══════════════════════════════════════════════════════════════════════════ -->
+<section id="tab-log" class="tab-panel hidden">
+
+  <div class="row gap-6" style="margin-bottom:8px">
+    <button id="btn-clear-log"  class="btn btn-ghost btn-sm flex-1">🗑 清除日誌</button>
+    <button id="btn-export-log" class="btn btn-ghost btn-sm flex-1">💾 匯出日誌</button>
+  </div>
+
+  <div id="log-list" class="log-list">
+    <div class="empty-hint">尚無日誌記錄</div>
   </div>
 
 </section>

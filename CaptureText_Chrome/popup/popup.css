@@ -81,17 +81,29 @@ body {
 /* ── Tab panels ────────────────────────────────────────────────────────── */
 .tab-panel { padding: 12px 14px; }
 .tab-panel.hidden { display: none; }
+#tab-settings { max-height: calc(100vh - 108px); overflow-y: auto; }
 
-/* ── Page info ─────────────────────────────────────────────────────────── */
-.page-info { margin-bottom: 8px; }
+/* ── Page info row (Feature 2) ──────────────────────────────────────────── */
+.page-info-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  min-height: 22px;
+}
+.page-info-lbl {
+  font-size: .72em;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 .page-title {
   font-size: .78em;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: block;
-  max-width: 100%;
+  flex: 1;
 }
 
 /* ── Utility ───────────────────────────────────────────────────────────── */
@@ -265,6 +277,43 @@ body {
 .input:focus, .select:focus, .textarea:focus { border-color: var(--primary); }
 .textarea { resize: vertical; min-height: 90px; font-family: inherit; }
 .select   { cursor: pointer; }
+
+/* ── Settings group title ───────────────────────────────────────────────── */
+.settings-group-title {
+  font-size: .72em;
+  font-weight: 700;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin: 12px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Log tab ────────────────────────────────────────────────────────────── */
+.log-list {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.log-list::-webkit-scrollbar { width: 5px; }
+.log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.log-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: .76em;
+}
+.log-item:last-child { border-bottom: none; }
+.log-ts     { color: var(--muted); font-size: .9em; }
+.log-detail { color: var(--text); }
+.log-error  { background: rgba(220,38,38,.08); }
+.log-error .log-detail { color: #f87171; }
 
 /* ── Hint box ──────────────────────────────────────────────────────────── */
 .hint-box {

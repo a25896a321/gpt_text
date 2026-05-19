@@ -4,26 +4,38 @@ window.__GCT_injected = true;
 
 // ── Default config (overridden by popup settings) ──────────────────────────────
 const CFG_DEFAULT = {
-  selector:         '[data-message-author-role]',
-  roleAttr:         'data-message-author-role',
-  targetRoles:      ['assistant', 'user'],
-  scrollDelay:      600,
-  showIndex:        true,
-  defaultSelection: 'assistant', // 'all' | <roleName> | 'none'
-  exportFormat:     'xls',
-  exportFilename:   '',
-  xlsDelim:         '|',
-  xlsCleanTargets:  ['標題：'],
-  autoExport:       true,        // auto-download after scan completes
+  selector:               '[data-message-author-role]',
+  roleAttr:               'data-message-author-role',
+  targetRoles:            ['assistant', 'user'],
+  scrollDelay:            600,
+  showIndex:              true,
+  defaultSelection:       'assistant',
+  exportFormat:           'xls',
+  exportFilename:         '',           // supports $D $T $Ts $M $K tokens
+  // XLS: first-column extraction by prefix/suffix
+  xlsPrefix:              '|標題：',
+  xlsSuffix:              '|',
+  xlsSuffixNewline:       true,
+  // XLS: remove exact substrings from cell content
+  xlsCleanTargets:        ['標題：'],
+  // XLS: remove entire lines containing these keywords
+  xlsExcludeLines:        ['已思考','推理花了','好的','好的！','可以！以下',
+                           '新的標題與內容','新的標題與知識','當然可以','http','標題：'],
+  xlsMinCellCharsEnabled: false,
+  xlsMinCellChars:        10,
+  xlsKeepAnomalyMarker:   false,        // add marker column for processed cells
+  exportRole:             false,        // include role column in output
+  downloadSubfolder:      '',           // subfolder under browser downloads
+  autoExport:             true,
 };
 
 // ── Runtime state ──────────────────────────────────────────────────────────────
 const STATE = {
-  messages:     [],   // full message objects { role, text, preview, index, selected }
-  captured:     [],   // subset chosen by user
-  stopScan:     false,
-  sidebarOpen:  false,
-  cfg:          { ...CFG_DEFAULT },
+  messages:    [],
+  captured:    [],
+  stopScan:    false,
+  sidebarOpen: false,
+  cfg:         { ...CFG_DEFAULT },
 };
 
 // ── Utility helpers ────────────────────────────────────────────────────────────
@@ -31,12 +43,26 @@ const sleep   = ms => new Promise(r => setTimeout(r, ms));
 const escHtml = s  => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 function safeFilename(raw) {
-  return (raw || document.title || 'capture').replace(/[\\/:*?"<>|]/g,'_').slice(0,80);
+  return (raw || document.title || 'capture').replace(/[\\/:*?"<>|]/g,'_').slice(0, 80);
 }
-function nowStr() {
-  const d = new Date();
-  return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}_${String(d.getHours()).padStart(2,'0')}${String(d.getMinutes()).padStart(2,'0')}`;
+
+// Resolve filename template tokens:
+//   $D=yyyymmdd  $T=hhmm  $Ts=hhmmss  $M=total rows  $K=remaining rows
+function resolveFilename(template, stats) {
+  const d   = new Date();
+  const pad = (n, l=2) => String(n).padStart(l, '0');
+  const D   = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`;
+  const T   = `${pad(d.getHours())}${pad(d.getMinutes())}`;
+  const Ts  = `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  const base = (template || document.title || 'capture')
+    .replace(/\$Ts/g, Ts)   // must precede $T
+    .replace(/\$T/g,  T)
+    .replace(/\$D/g,  D)
+    .replace(/\$M/g,  stats?.total     != null ? String(stats.total)     : '')
+    .replace(/\$K/g,  stats?.remaining != null ? String(stats.remaining) : '');
+  return safeFilename(base);
 }
+
 function triggerDownload(content, filename, mime) {
   const blob = new Blob([content], { type: mime });
   const a    = Object.assign(document.createElement('a'), {
@@ -49,7 +75,7 @@ function triggerDownload(content, filename, mime) {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-// ── Scroll-container detection (from capture.js) ──────────────────────────────
+// ── Scroll-container detection ─────────────────────────────────────────────────
 function findScrollContainer(selector) {
   const first = document.querySelector(selector);
   if (first) {
@@ -75,7 +101,6 @@ function makeScroller(container) {
 async function scrollAndScan(cfg, onProgress) {
   STATE.stopScan = false;
 
-  // Initial render trigger
   window.scrollTo(0, 0);                        await sleep(400);
   window.scrollTo(0, window.innerHeight * 0.4); await sleep(600);
   window.scrollTo(0, 0);                        await sleep(400);
@@ -104,11 +129,9 @@ async function scrollAndScan(cfg, onProgress) {
   for (let i = 0; i < 800; i++) {
     if (STATE.stopScan) break;
     harvest();
-
     const totalH = scroller.scrollH;
     const pct    = totalH > 0 ? Math.min(100, Math.round((pos / totalH) * 100)) : 0;
     onProgress && onProgress(pct, seen.size);
-
     if (pos >= totalH) {
       if (totalH === lastScrollH) { if (++stableRounds >= 3) break; }
       else stableRounds = 0;
@@ -127,8 +150,7 @@ async function scrollAndScan(cfg, onProgress) {
     .map((m, i) => ({
       ...m,
       index:    i + 1,
-      selected: cfg.defaultSelection === 'all' ||
-                cfg.defaultSelection === m.role,
+      selected: cfg.defaultSelection === 'all' || cfg.defaultSelection === m.role,
     }));
 
   return STATE.messages;
@@ -142,8 +164,7 @@ function formatTxt(messages, cfg) {
     `網址：${location.href}`,
     `時間：${new Date().toLocaleString('zh-TW')}`,
     `訊息：${messages.length} 筆`,
-    '='.repeat(40),
-    '',
+    '='.repeat(40), '',
   ].join('\n');
   return header + messages.map(m => {
     const label = m.role === 'user' ? '[User]' : m.role === 'assistant' ? '[ChatGPT]' : `[${m.role}]`;
@@ -170,51 +191,150 @@ function formatHtml(messages, cfg) {
 ${rows}</body></html>`;
 }
 
-function formatXls(messages, cfg) {
-  const delim        = cfg.xlsDelim || '|';
+// ── XLS cell processor ─────────────────────────────────────────────────────────
+function processXlsMessage(text, cfg) {
+  const notes   = [];
+  let content   = text;
+  let titleCell = null;
+
+  // Step 1: prefix/suffix first-column extraction
+  const prefix = (cfg.xlsPrefix || '').trim();
+  const suffix = (cfg.xlsSuffix || '').trim();
+  if (prefix || suffix) {
+    const pRe  = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const sRe  = suffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const nlRe = cfg.xlsSuffixNewline ? '\\n?' : '';
+    const re   = new RegExp(pRe + '([\\s\\S]*?)' + sRe + nlRe);
+    const m    = content.match(re);
+    if (m) {
+      titleCell = m[1].trim();
+      content   = (content.slice(0, m.index) + content.slice(m.index + m[0].length)).trim();
+    } else {
+      titleCell = '';  // no match: title column exists but is empty
+    }
+  }
+
+  // Step 2: remove exact substrings (xlsCleanTargets)
   const cleanTargets = (cfg.xlsCleanTargets || []).filter(Boolean);
-  const header       = `<tr><th>角色</th><th>訊息</th></tr>\n`;
+  if (cleanTargets.length) {
+    const before = content;
+    cleanTargets.forEach(t => { content = content.split(t).join(''); });
+    content = content.trim();
+    if (content !== before.trim()) notes.push('已清除字串');
+  }
+
+  // Step 3: remove lines containing any exclude keyword
+  const excludeKws = (cfg.xlsExcludeLines || []).filter(Boolean);
+  if (excludeKws.length && content) {
+    const lines   = content.split('\n');
+    const kept    = lines.filter(ln => !excludeKws.some(kw => ln.includes(kw)));
+    const removed = lines.length - kept.length;
+    if (removed > 0) {
+      notes.push(`排除${removed}行`);
+      content = kept.join('\n').trim();
+    }
+  }
+
+  return { titleCell, content, notes };
+}
+
+function formatXls(messages, cfg) {
+  const useExtraction = !!(cfg.xlsPrefix || '').trim() || !!(cfg.xlsSuffix || '').trim();
+  const showRole      = cfg.exportRole !== false;
+  const showMarker    = !!cfg.xlsKeepAnomalyMarker;
+  const minEnabled    = !!cfg.xlsMinCellCharsEnabled;
+  const minChars      = Number(cfg.xlsMinCellChars) || 0;
+
+  const thCells = [];
+  if (showRole)      thCells.push('<th>角色</th>');
+  if (useExtraction) thCells.push('<th>標題</th>');
+  thCells.push('<th>內容</th>');
+  if (showMarker)    thCells.push('<th>標記</th>');
+  const header = `<tr>${thCells.join('')}</tr>\n`;
+
+  let total = 0, remaining = 0;
 
   const dataRows = messages.map(m => {
-    let parts = m.text.split(delim).map(p => p.trim()).filter(p => p.length > 0);
-    if (cleanTargets.length) {
-      parts = parts.map(p => {
-        let v = p;
-        cleanTargets.forEach(t => { if (t) v = v.split(t).join(''); });
-        return v.trim();
-      }).filter(p => p.length > 0);
-    }
-    const roleLabel = m.role === 'user' ? 'User' : m.role === 'assistant' ? 'ChatGPT' : m.role;
-    const cells     = parts.length > 0 ? parts.map(p => `<td>${escHtml(p)}</td>`).join('') : `<td>${escHtml(m.text)}</td>`;
-    return `<tr><td>${escHtml(roleLabel)}</td>${cells}</tr>`;
-  }).join('\n');
+    const { titleCell, content, notes } = processXlsMessage(m.text, cfg);
+    total++;
 
-  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+    let isTooShort = false;
+    if (minEnabled && minChars > 0 && content.length < minChars) {
+      isTooShort = true;
+      notes.push(`字數不足(${content.length})`);
+    }
+    if (isTooShort && !showMarker) return '';  // skip row
+
+    remaining++;
+    const tdCells = [];
+    if (showRole) {
+      const lbl = m.role === 'user' ? 'User' : m.role === 'assistant' ? 'ChatGPT' : m.role;
+      tdCells.push(`<td>${escHtml(lbl)}</td>`);
+    }
+    if (useExtraction) tdCells.push(`<td>${escHtml(titleCell || '')}</td>`);
+    const style = isTooShort ? ' style="color:red"' : '';
+    tdCells.push(`<td${style}>${escHtml(content)}</td>`);
+    if (showMarker) tdCells.push(`<td>${escHtml(notes.join('; '))}</td>`);
+    return `<tr>${tdCells.join('')}</tr>`;
+  }).filter(Boolean);
+
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
 <head><meta charset="utf-8">
 <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>
 <x:Name>捕獲結果</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>
 </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
-</head><body><table border="1">${header}${dataRows}</table></body></html>`;
+</head><body><table border="1">${header}${dataRows.join('\n')}</table></body></html>`;
+
+  return { html, total, remaining };
 }
 
-// ── Trigger file download ──────────────────────────────────────────────────────
-function exportMessages(messages, format, cfg) {
-  const base = safeFilename(cfg.exportFilename || document.title) + '_' + nowStr();
+// ── prepareExport: format but don't download ───────────────────────────────────
+function prepareExport(messages, format, cfg) {
   if (format === 'txt') {
-    triggerDownload(formatTxt(messages, cfg), base + '.txt', 'text/plain;charset=utf-8');
-  } else if (format === 'html') {
-    triggerDownload(formatHtml(messages, cfg), base + '.html', 'text/html;charset=utf-8');
-  } else if (format === 'xls') {
-    triggerDownload(formatXls(messages, cfg), base + '.xls', 'application/vnd.ms-excel;charset=utf-8');
-  } else if (format === 'clipboard') {
-    navigator.clipboard.writeText(formatTxt(messages, cfg)).catch(() => {});
+    return { content: formatTxt(messages, cfg), mime: 'text/plain;charset=utf-8', ext: '.txt', total: messages.length, remaining: messages.length };
   }
+  if (format === 'html') {
+    return { content: formatHtml(messages, cfg), mime: 'text/html;charset=utf-8', ext: '.html', total: messages.length, remaining: messages.length };
+  }
+  if (format === 'xls') {
+    const { html, total, remaining } = formatXls(messages, cfg);
+    return { content: html, mime: 'application/vnd.ms-excel;charset=utf-8', ext: '.xls', total, remaining };
+  }
+  if (format === 'clipboard') {
+    return { content: formatTxt(messages, cfg), mime: '', ext: '' };
+  }
+  return null;
+}
+
+// ── exportMessages: for batch mode (triggers download in-page) ─────────────────
+function exportMessages(messages, format, cfg) {
+  const result = prepareExport(messages, format, cfg);
+  if (!result) return { count: messages.length };
+
+  if (format === 'clipboard') {
+    navigator.clipboard.writeText(result.content).catch(() => {});
+    return { count: messages.length };
+  }
+
+  const fname = resolveFilename(cfg.exportFilename, result) + result.ext;
+  const subf  = (cfg.downloadSubfolder || '').trim().replace(/\/+$/, '');
+  const full  = subf ? `${subf}/${fname}` : fname;
+
+  if (subf) {
+    // Delegate to service worker which can call chrome.downloads
+    chrome.runtime.sendMessage({
+      type: 'TRIGGER_DOWNLOAD', content: result.content, filename: full, mime: result.mime,
+    }).catch(() => triggerDownload(result.content, fname, result.mime));
+  } else {
+    triggerDownload(result.content, fname, result.mime);
+  }
+
+  return { count: messages.length, total: result.total, remaining: result.remaining };
 }
 
 // ── Sidebar reading mode ───────────────────────────────────────────────────────
 function buildSidebar(messages, cfg) {
   removeSidebar();
-
   const sidebar = document.createElement('div');
   sidebar.id = 'gct-sidebar';
 
@@ -246,7 +366,6 @@ function buildSidebar(messages, cfg) {
   document.documentElement.classList.add('gct-sidebar-open');
   STATE.sidebarOpen = true;
 
-  // Font size control
   let fontSize = 14;
   const body   = sidebar.querySelector('#gct-sb-body');
   sidebar.querySelector('#gct-sb-font-sm').addEventListener('click', () => {
@@ -257,24 +376,20 @@ function buildSidebar(messages, cfg) {
     fontSize = Math.min(22, fontSize + 1);
     body.style.fontSize = fontSize + 'px';
   });
-
-  // Close
   sidebar.querySelector('#gct-sb-close').addEventListener('click', removeSidebar);
 
-  // Live search / highlight
   sidebar.querySelector('#gct-sb-search').addEventListener('input', e => {
-    const q      = e.target.value.trim().toLowerCase();
-    const count  = sidebar.querySelector('#gct-sb-count');
-    let visible  = 0;
+    const q     = e.target.value.trim().toLowerCase();
+    const count = sidebar.querySelector('#gct-sb-count');
+    let visible = 0;
     sidebar.querySelectorAll('.gct-msg').forEach(el => {
       const txt     = el.querySelector('.gct-msg-body').innerText.toLowerCase();
       const matched = !q || txt.includes(q);
       el.style.display = matched ? '' : 'none';
       if (matched) visible++;
-      // Highlight
-      const bodyEl  = el.querySelector('.gct-msg-body');
+      const bodyEl = el.querySelector('.gct-msg-body');
       if (q && matched) {
-        const re   = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ')', 'gi');
+        const re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ')', 'gi');
         bodyEl.innerHTML = escHtml(bodyEl.innerText || bodyEl.textContent)
           .replace(re, '<mark class="gct-hl">$1</mark>');
       } else {
@@ -284,7 +399,6 @@ function buildSidebar(messages, cfg) {
     count.textContent = q ? `找到 ${visible} / ${messages.length} 則` : `共 ${messages.length} 則訊息`;
   });
 
-  // Animate in
   requestAnimationFrame(() => sidebar.classList.add('gct-sb-visible'));
 }
 
@@ -317,10 +431,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             chrome.runtime.sendMessage({ type: 'SCAN_PROGRESS', pct, count }).catch(() => {});
           });
 
-          // Apply default capture selection
           STATE.captured = messages.filter(m =>
-            cfg.defaultSelection === 'all' ||
-            cfg.defaultSelection === m.role
+            cfg.defaultSelection === 'all' || cfg.defaultSelection === m.role
           );
 
           const summaries = messages.map(m => ({
@@ -330,18 +442,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             selected: STATE.captured.some(c => c.index === m.index),
           }));
 
-          // Batch mode: export FIRST (before notifying background to avoid
-          // navigation racing the download trigger on the last URL)
           if (msg.batchMode && STATE.captured.length) {
             exportMessages(STATE.captured, cfg.exportFormat, cfg);
           }
 
-          // Report completion to background (triggers advance to next URL)
           chrome.runtime.sendMessage({
-            type:      'SCAN_DONE',
-            summaries,
-            url:       location.href,
-            title:     document.title,
+            type: 'SCAN_DONE', summaries, url: location.href, title: document.title,
           }).catch(() => {});
 
           sendResponse({ ok: true, count: messages.length });
@@ -364,17 +470,31 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           });
           break;
 
-        case 'SET_SELECTION': {
-          // msg.indices: array of indices to mark as captured
+        case 'SET_SELECTION':
           STATE.captured = STATE.messages.filter(m => msg.indices.includes(m.index));
           sendResponse({ ok: true, count: STATE.captured.length });
           break;
-        }
 
         case 'DO_EXPORT': {
-          const msgs = STATE.captured.length ? STATE.captured : STATE.messages;
-          exportMessages(msgs, msg.format, cfg);
-          sendResponse({ ok: true, count: msgs.length });
+          const msgs   = STATE.captured.length ? STATE.captured : STATE.messages;
+          const result = prepareExport(msgs, msg.format, cfg);
+          if (!result) { sendResponse({ ok: false, error: 'Unknown format' }); break; }
+
+          if (msg.format === 'clipboard') {
+            navigator.clipboard.writeText(result.content).catch(() => {});
+            sendResponse({ ok: true, count: msgs.length });
+          } else {
+            const fname = resolveFilename(cfg.exportFilename, result) + result.ext;
+            sendResponse({
+              ok:        true,
+              count:     msgs.length,
+              content:   result.content,
+              filename:  fname,
+              mime:      result.mime,
+              total:     result.total,
+              remaining: result.remaining,
+            });
+          }
           break;
         }
 
@@ -390,7 +510,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: false, error: e.message });
     }
   })();
-  return true; // async
+  return true;
 });
 
 } // end guard
