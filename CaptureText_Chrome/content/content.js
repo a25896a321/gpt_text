@@ -7,19 +7,18 @@ const CFG_DEFAULT = {
   selector:               '[data-message-author-role]',
   roleAttr:               'data-message-author-role',
   targetRoles:            ['assistant', 'user'],
-  scrollDelay:            600,
-  showIndex:              true,
+  scrollDelay:            350,
   defaultSelection:       'assistant',
   exportFormat:           'xls',
-  exportFilename:         '',           // supports $D $T $Ts $M $K tokens
+  exportFilename:         '$D$T-$M-$K',  // supports $D $T $Ts $M $K tokens
   // XLS: first-column extraction by prefix/suffix
   xlsPrefix:              '|標題：',
   xlsSuffix:              '|',
   xlsSuffixNewline:       true,
   // XLS: remove exact substrings from cell content
-  xlsCleanTargets:        ['標題：'],
+  xlsCleanTargets:        ['標題：', '「', '」'],
   // XLS: remove entire lines containing these keywords
-  xlsExcludeLines:        ['已思考','推理花了','好的','好的！','可以！以下',
+  xlsExcludeLines:        ['ChatGPT','已思考','推理花了','好的，','好的！','可以！以下',
                            '新的標題與內容','新的標題與知識','當然可以','http','標題：'],
   xlsMinCellCharsEnabled: true,
   xlsMinCellChars:        300,
@@ -170,8 +169,7 @@ function formatTxt(messages, cfg) {
   ].join('\n');
   return header + messages.map(m => {
     const label = m.role === 'user' ? '[User]' : m.role === 'assistant' ? '[ChatGPT]' : `[${m.role}]`;
-    const idx   = cfg.showIndex ? ` #${m.index}` : '';
-    return `${label}${idx}\n${m.text}\n${divider}`;
+    return `${label}\n${m.text}\n${divider}`;
   }).join('\n\n');
 }
 
@@ -179,8 +177,7 @@ function formatHtml(messages, cfg) {
   const rows = messages.map(m => {
     const cls   = m.role === 'user' ? 'user' : 'assistant';
     const label = m.role === 'user' ? 'User' : 'ChatGPT';
-    const idx   = cfg.showIndex ? ` <span class="idx">#${m.index}</span>` : '';
-    return `<div class="msg ${cls}"><div class="role">${label}${idx}</div><div class="body">${escHtml(m.text)}</div></div>`;
+    return `<div class="msg ${cls}"><div class="role">${label}</div><div class="body">${escHtml(m.text)}</div></div>`;
   }).join('\n');
   return `<!DOCTYPE html><html lang="zh-TW"><head><meta charset="utf-8"><title>${escHtml(document.title)}</title>
 <style>body{font-family:sans-serif;max-width:820px;margin:0 auto;padding:24px;background:#f5f5f5}
@@ -225,25 +222,39 @@ function processXlsMessage(text, cfg) {
   let excludedLinesCount = 0;
   const cleanTargets = (cfg.xlsCleanTargets || []).filter(Boolean);
   if (cleanTargets.length) {
-    // Apply to titleCell too
     if (titleCell !== null) {
       cleanTargets.forEach(t => { titleCell = titleCell.split(t).join(''); });
       titleCell = titleCell.trim();
     }
-    const before = content;
-    cleanTargets.forEach(t => { content = content.split(t).join(''); });
+    const matchDetails = [];
+    let totalRemoved = 0;
+    cleanTargets.forEach(t => {
+      const parts = content.split(t);
+      const cnt   = parts.length - 1;
+      if (cnt > 0) { matchDetails.push(`${t}×${cnt}`); totalRemoved += cnt; }
+      content = parts.join('');
+    });
     content = content.trim();
-    if (content !== before.trim()) { notes.push('已清除字串'); cleanedCells = 1; }
+    if (totalRemoved > 0) {
+      notes.push(`已清除字串${totalRemoved}次 / 匹配項目：${matchDetails.join('、')}`);
+      cleanedCells = 1;
+    }
   }
 
   // Step 3: remove lines containing any exclude keyword
   const excludeKws = (cfg.xlsExcludeLines || []).filter(Boolean);
   if (excludeKws.length && content) {
-    const lines   = content.split('\n');
-    const kept    = lines.filter(ln => !excludeKws.some(kw => ln.includes(kw)));
+    const lines    = content.split('\n');
+    const kwCounts = new Map();
+    const kept     = lines.filter(ln => {
+      const hit = excludeKws.find(kw => ln.includes(kw));
+      if (hit) { kwCounts.set(hit, (kwCounts.get(hit) || 0) + 1); return false; }
+      return true;
+    });
     const removed = lines.length - kept.length;
     if (removed > 0) {
-      notes.push(`排除${removed}行`);
+      const detail = [...kwCounts.entries()].map(([k, v]) => `${k}(${v}行)`).join('、');
+      notes.push(`排除${removed}行 / 匹配項目：${detail}`);
       content = kept.join('\n').trim();
       excludedLinesCount = removed;
     }
@@ -281,7 +292,7 @@ function formatXls(messages, cfg) {
     if (minEnabled && minChars > 0 && content.length < minChars) {
       isTooShort = true;
       totalTooShort++;
-      notes.push(`字數不足(${content.length})`);
+      notes.push(`字數不足 / 字數僅${content.length}`);
     }
     if (isTooShort && !showMarker) return '';  // skip row
 
@@ -362,9 +373,8 @@ function buildSidebar(messages, cfg) {
   const items = messages.map(m => {
     const cls   = m.role === 'user' ? 'gct-msg-user' : 'gct-msg-assistant';
     const label = m.role === 'user' ? 'User' : m.role === 'assistant' ? 'ChatGPT' : m.role;
-    const idx   = cfg.showIndex ? ` <span class="gct-idx">#${m.index}</span>` : '';
     return `<div class="gct-msg ${cls}" data-idx="${m.index}">
-      <div class="gct-msg-role">${escHtml(label)}${idx}</div>
+      <div class="gct-msg-role">${escHtml(label)}</div>
       <div class="gct-msg-body">${escHtml(m.text)}</div>
     </div>`;
   }).join('');

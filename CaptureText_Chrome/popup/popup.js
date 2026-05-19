@@ -5,7 +5,7 @@ const IS_PINNED = new URLSearchParams(location.search).get('pin') === '1';
 
 // ── Default config ─────────────────────────────────────────────────────────────
 const XLS_EXCLUDE_DEFAULT = [
-  '已思考','推理花了','好的','好的！','可以！以下',
+  'ChatGPT','已思考','推理花了','好的，','好的！','可以！以下',
   '新的標題與內容','新的標題與知識','當然可以','http','標題：',
 ].join('\n');
 
@@ -27,7 +27,7 @@ const CFG_DEFAULTS = {
   // XLS: column headers (comma-separated)
   xlsColNames:            '標題,內容',
   // XLS: remove exact substrings
-  xlsCleanTargets:        '標題：',
+  xlsCleanTargets:        '標題：,「,」',
   // XLS: remove lines containing keywords (newline-separated)
   xlsExcludeLines:        XLS_EXCLUDE_DEFAULT,
   // XLS: minimum cell chars
@@ -35,11 +35,10 @@ const CFG_DEFAULTS = {
   xlsMinCellChars:        300,
   // XLS: anomaly marker column
   xlsKeepAnomalyMarker:   false,
-  showIndex:              false,
   autoExport:             true,
   alwaysOnTop:            true,
   // Log settings
-  logAutoExport:          false,
+  logAutoExport:          true,
   logDownloadSubfolder:   '',
   logFilename:            '',
 };
@@ -118,7 +117,6 @@ function buildConfig() {
     xlsMinCellCharsEnabled: cfg.xlsMinCellCharsEnabled === true,
     xlsMinCellChars:        Number(cfg.xlsMinCellChars) || 300,
     xlsKeepAnomalyMarker:   cfg.xlsKeepAnomalyMarker === true,
-    showIndex:              cfg.showIndex,
     autoExport:             cfg.autoExport !== false,
   };
 }
@@ -229,7 +227,7 @@ async function doExportLog() {
   const D   = `${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}`;
   const T   = `${pad2(d.getHours())}${pad2(d.getMinutes())}`;
   const Ts  = T + pad2(d.getSeconds());
-  const base = (cfg.logFilename?.trim() || cfg.exportFilename?.trim() || '$D$T')
+  const base = (cfg.logFilename?.trim() || '$D$T')
     .replace(/\$Ts/g, Ts).replace(/\$T/g, T).replace(/\$D/g, D)
     .replace(/\$M/g, '').replace(/\$K/g, '');
   const safe = ('log-' + base).replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) + '.txt';
@@ -730,7 +728,6 @@ function applySettingsToUI() {
   $('cfg-xlsMinCellCharsEnabled').checked = cfg.xlsMinCellCharsEnabled !== false;
   $('cfg-xlsMinCellChars').value       = cfg.xlsMinCellChars;
   $('cfg-xlsKeepAnomalyMarker').checked = cfg.xlsKeepAnomalyMarker === true;
-  $('cfg-showIndex').checked           = cfg.showIndex === true;
   $('cfg-autoExport').checked          = cfg.autoExport !== false;
   $('cfg-logAutoExport').checked       = cfg.logAutoExport === true;
   $('cfg-logDownloadSubfolder').value  = cfg.logDownloadSubfolder || '';
@@ -760,7 +757,6 @@ function readSettingsFromUI() {
     xlsMinCellCharsEnabled: $('cfg-xlsMinCellCharsEnabled').checked,
     xlsMinCellChars:        Number($('cfg-xlsMinCellChars').value) || 300,
     xlsKeepAnomalyMarker:   $('cfg-xlsKeepAnomalyMarker').checked,
-    showIndex:              $('cfg-showIndex').checked,
     autoExport:             $('cfg-autoExport').checked,
     logAutoExport:          $('cfg-logAutoExport').checked,
     logDownloadSubfolder:   $('cfg-logDownloadSubfolder').value.trim(),

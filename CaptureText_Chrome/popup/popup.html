@@ -11,7 +11,7 @@
 <header class="hdr">
   <img src="../icons/CaptureText_icon.png" class="hdr-icon" alt="">
   <span class="hdr-title">文字捕獲工具</span>
-  <span class="hdr-ver">v1.0.5</span>
+  <span class="hdr-ver">v1.0.6</span>
   <button id="btn-pin-toggle" class="btn-pin" title="置頂：關閉（點擊切換）">📌</button>
   <button id="btn-close-panel" class="hdr-close" title="關閉">✕</button>
 </header>
@@ -130,6 +130,11 @@
   <!-- ── 匯出設定 ── -->
   <div class="settings-group-title">匯出設定</div>
 
+  <div class="field row gap-8">
+    <label class="lbl">自動匯出（掃描完成後立即下載）</label>
+    <input id="cfg-autoExport" type="checkbox" checked>
+  </div>
+
   <div class="field">
     <label class="lbl">自動匯出格式</label>
     <select id="cfg-exportFormat" class="select">
@@ -158,11 +163,6 @@
   <div class="field row gap-8">
     <label class="lbl">匯出角色欄位<small>（關閉後匯出內容不含角色ID）</small></label>
     <input id="cfg-exportRole" type="checkbox">
-  </div>
-
-  <div class="field row gap-8">
-    <label class="lbl">顯示序號<small>（僅 XLS 有效）</small></label>
-    <input id="cfg-showIndex" type="checkbox">
   </div>
 
   <div class="field">
@@ -211,14 +211,6 @@
     <input id="cfg-xlsKeepAnomalyMarker" type="checkbox">
   </div>
 
-  <!-- ── 介面設定 ── -->
-  <div class="settings-group-title">介面設定</div>
-
-  <div class="field row gap-8">
-    <label class="lbl">自動匯出（掃描完成後立即下載）</label>
-    <input id="cfg-autoExport" type="checkbox" checked>
-  </div>
-
   <div class="row mt-8 gap-6">
     <button id="btn-save-cfg"  class="btn btn-primary flex-1">💾 儲存設定</button>
     <button id="btn-reset-cfg" class="btn btn-ghost">重置</button>
@@ -235,15 +227,15 @@
   <div class="settings-group-title">日誌設定</div>
   <div class="field row gap-8">
     <label class="lbl">日誌自動匯出<small>（每次操作後自動下載日誌）</small></label>
-    <input id="cfg-logAutoExport" type="checkbox">
+    <input id="cfg-logAutoExport" type="checkbox" checked>
   </div>
   <div class="field">
     <label class="lbl">日誌下載子資料夾<small>（留空=使用下載設定路徑）</small></label>
     <input id="cfg-logDownloadSubfolder" class="input" type="text" placeholder="例：logs">
   </div>
   <div class="field">
-    <label class="lbl">日誌檔名模板<small>（留空=跟隨自訂檔名模板，前綴固定加「log-」）</small></label>
-    <input id="cfg-logFilename" class="input" type="text" placeholder="留空=跟隨自訂檔名模板">
+    <label class="lbl">日誌檔名模板<small>（前綴固定加「log-」；留空預設 log-$D$T；可用：$D / $T / $Ts）</small></label>
+    <input id="cfg-logFilename" class="input" type="text" placeholder="留空預設 log-$D$T">
   </div>
   <div class="row gap-6" style="margin:8px 0">
     <button id="btn-save-log-cfg" class="btn btn-primary btn-sm flex-1">💾 儲存日誌設定</button>
