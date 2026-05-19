@@ -11,7 +11,7 @@
 <header class="hdr">
   <img src="../icons/CaptureText_icon.png" class="hdr-icon" alt="">
   <span class="hdr-title">文字捕獲工具</span>
-  <span class="hdr-ver">v1.0.7</span>
+  <span class="hdr-ver">v1.0.8</span>
   <button id="btn-pin-toggle" class="btn-pin" title="置頂：關閉（點擊切換）">📌</button>
   <button id="btn-close-panel" class="hdr-close" title="關閉">✕</button>
 </header>
@@ -228,6 +228,10 @@
   <div class="field row gap-8">
     <label class="lbl">日誌自動匯出<small>（每次操作後自動下載日誌）</small></label>
     <input id="cfg-logAutoExport" type="checkbox" checked>
+  </div>
+  <div class="field row gap-8">
+    <label class="lbl">自動下載前清除舊日誌<small>（下載前先清空先前的記錄）</small></label>
+    <input id="cfg-logClearBeforeExport" type="checkbox" checked>
   </div>
   <div class="field">
     <label class="lbl">日誌下載子資料夾<small>（留空=使用下載設定路徑）</small></label>

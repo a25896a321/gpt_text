@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "文字捕獲工具",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "捕獲 ChatGPT 等動態渲染頁面的對話文字，支援批量掃描與側邊閱讀模式",
   "icons": {
     "16":  "icons/CaptureText_icon_16.png",

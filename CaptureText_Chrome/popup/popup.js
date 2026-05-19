@@ -39,6 +39,7 @@ const CFG_DEFAULTS = {
   alwaysOnTop:            true,
   // Log settings
   logAutoExport:          true,
+  logClearBeforeExport:   true,
   logDownloadSubfolder:   '',
   logFilename:            '',
 };
@@ -259,7 +260,13 @@ async function doExportLog() {
 }
 
 async function maybeAutoExportLog() {
-  if (cfg.logAutoExport) await doExportLog();
+  if (!cfg.logAutoExport) return;
+  await doExportLog();
+  if (cfg.logClearBeforeExport) {
+    logs = [];
+    expandedLogs.clear();
+    renderLogList();
+  }
 }
 
 $('btn-clear-log').addEventListener('click', () => {
@@ -273,10 +280,11 @@ $('btn-export-log').addEventListener('click', () => doExportLog());
 
 $('btn-save-log-cfg').addEventListener('click', async () => {
   cfg.logAutoExport        = $('cfg-logAutoExport').checked;
+  cfg.logClearBeforeExport = $('cfg-logClearBeforeExport').checked;
   cfg.logDownloadSubfolder = $('cfg-logDownloadSubfolder').value.trim();
   cfg.logFilename          = $('cfg-logFilename').value.trim();
   const stored = await chrome.storage.sync.get('gct_cfg').catch(() => ({}));
-  const saved  = { ...(stored.gct_cfg || {}), logAutoExport: cfg.logAutoExport, logDownloadSubfolder: cfg.logDownloadSubfolder, logFilename: cfg.logFilename };
+  const saved  = { ...(stored.gct_cfg || {}), logAutoExport: cfg.logAutoExport, logClearBeforeExport: cfg.logClearBeforeExport, logDownloadSubfolder: cfg.logDownloadSubfolder, logFilename: cfg.logFilename };
   await chrome.storage.sync.set({ gct_cfg: saved }).catch(() => {});
   setFooter('日誌設定已儲存');
 });
@@ -762,9 +770,10 @@ function applySettingsToUI() {
   $('cfg-xlsMinCellChars').value       = cfg.xlsMinCellChars;
   $('cfg-xlsKeepAnomalyMarker').checked = cfg.xlsKeepAnomalyMarker === true;
   $('cfg-autoExport').checked          = cfg.autoExport !== false;
-  $('cfg-logAutoExport').checked       = cfg.logAutoExport === true;
-  $('cfg-logDownloadSubfolder').value  = cfg.logDownloadSubfolder || '';
-  $('cfg-logFilename').value           = cfg.logFilename || '';
+  $('cfg-logAutoExport').checked          = cfg.logAutoExport === true;
+  $('cfg-logClearBeforeExport').checked   = cfg.logClearBeforeExport !== false;
+  $('cfg-logDownloadSubfolder').value     = cfg.logDownloadSubfolder || '';
+  $('cfg-logFilename').value              = cfg.logFilename || '';
   updateRoleUI(cfg.defaultSelection);
   updatePinButton();
 }
@@ -792,6 +801,7 @@ function readSettingsFromUI() {
     xlsKeepAnomalyMarker:   $('cfg-xlsKeepAnomalyMarker').checked,
     autoExport:             $('cfg-autoExport').checked,
     logAutoExport:          $('cfg-logAutoExport').checked,
+    logClearBeforeExport:   $('cfg-logClearBeforeExport').checked,
     logDownloadSubfolder:   $('cfg-logDownloadSubfolder').value.trim(),
     logFilename:            $('cfg-logFilename').value.trim(),
     alwaysOnTop:            cfg.alwaysOnTop,  // preserved from pin button, not a form field
