@@ -21,11 +21,12 @@ const CFG_DEFAULT = {
   // XLS: remove entire lines containing these keywords
   xlsExcludeLines:        ['已思考','推理花了','好的','好的！','可以！以下',
                            '新的標題與內容','新的標題與知識','當然可以','http','標題：'],
-  xlsMinCellCharsEnabled: false,
+  xlsMinCellCharsEnabled: true,
   xlsMinCellChars:        300,
   xlsKeepAnomalyMarker:   false,        // add marker column for processed cells
   exportRole:             false,        // include role column in output
-  xlsPrefixTrimSpaces:    false,        // allow spaces between prefix/suffix chars
+  xlsPrefixTrimSpaces:    true,         // allow spaces between prefix/suffix chars
+  xlsColNames:            ['標題', '內容'],
   downloadSubfolder:      '',           // subfolder under browser downloads
   autoExport:             true,
 };
@@ -219,13 +220,20 @@ function processXlsMessage(text, cfg) {
     }
   }
 
-  // Step 2: remove exact substrings (xlsCleanTargets)
+  // Step 2: remove exact substrings from BOTH titleCell AND content (xlsCleanTargets)
+  let cleanedCells     = 0;
+  let excludedLinesCount = 0;
   const cleanTargets = (cfg.xlsCleanTargets || []).filter(Boolean);
   if (cleanTargets.length) {
+    // Apply to titleCell too
+    if (titleCell !== null) {
+      cleanTargets.forEach(t => { titleCell = titleCell.split(t).join(''); });
+      titleCell = titleCell.trim();
+    }
     const before = content;
     cleanTargets.forEach(t => { content = content.split(t).join(''); });
     content = content.trim();
-    if (content !== before.trim()) notes.push('已清除字串');
+    if (content !== before.trim()) { notes.push('已清除字串'); cleanedCells = 1; }
   }
 
   // Step 3: remove lines containing any exclude keyword
@@ -237,10 +245,11 @@ function processXlsMessage(text, cfg) {
     if (removed > 0) {
       notes.push(`排除${removed}行`);
       content = kept.join('\n').trim();
+      excludedLinesCount = removed;
     }
   }
 
-  return { titleCell, content, notes };
+  return { titleCell, content, notes, cleanedCells, excludedLinesCount };
 }
 
 function formatXls(messages, cfg) {
@@ -249,23 +258,29 @@ function formatXls(messages, cfg) {
   const showMarker    = !!cfg.xlsKeepAnomalyMarker;
   const minEnabled    = !!cfg.xlsMinCellCharsEnabled;
   const minChars      = Number(cfg.xlsMinCellChars) || 0;
+  const colNames      = cfg.xlsColNames || ['標題', '內容'];
+  const colTitle      = colNames[0] || '標題';
+  const colContent    = colNames[1] || '內容';
 
   const thCells = [];
   if (showRole)      thCells.push('<th>角色</th>');
-  if (useExtraction) thCells.push('<th>標題</th>');
-  thCells.push('<th>內容</th>');
+  if (useExtraction) thCells.push(`<th>${escHtml(colTitle)}</th>`);
+  thCells.push(`<th>${escHtml(colContent)}</th>`);
   if (showMarker)    thCells.push('<th>標記</th>');
   const header = `<tr>${thCells.join('')}</tr>\n`;
 
-  let total = 0, remaining = 0;
+  let total = 0, remaining = 0, totalCleanedCells = 0, totalExcludedLines = 0, totalTooShort = 0;
 
   const dataRows = messages.map(m => {
-    const { titleCell, content, notes } = processXlsMessage(m.text, cfg);
+    const { titleCell, content, notes, cleanedCells, excludedLinesCount } = processXlsMessage(m.text, cfg);
     total++;
+    totalCleanedCells  += cleanedCells;
+    totalExcludedLines += excludedLinesCount;
 
     let isTooShort = false;
     if (minEnabled && minChars > 0 && content.length < minChars) {
       isTooShort = true;
+      totalTooShort++;
       notes.push(`字數不足(${content.length})`);
     }
     if (isTooShort && !showMarker) return '';  // skip row
@@ -276,9 +291,10 @@ function formatXls(messages, cfg) {
       const lbl = m.role === 'user' ? 'User' : m.role === 'assistant' ? 'ChatGPT' : m.role;
       tdCells.push(`<td>${escHtml(lbl)}</td>`);
     }
-    if (useExtraction) tdCells.push(`<td>${escHtml(titleCell || '')}</td>`);
-    const style = isTooShort ? ' style="color:red"' : '';
-    tdCells.push(`<td${style}>${escHtml(content)}</td>`);
+    // Preserve newlines in XLS via &#10; + white-space:pre-wrap
+    if (useExtraction) tdCells.push(`<td style="white-space:pre-wrap;mso-data-placement:same-cell">${escHtml(titleCell || '').replace(/\n/g,'&#10;')}</td>`);
+    const cellStyle = `white-space:pre-wrap;mso-data-placement:same-cell${isTooShort ? ';color:red' : ''}`;
+    tdCells.push(`<td style="${cellStyle}">${escHtml(content).replace(/\n/g,'&#10;')}</td>`);
     if (showMarker) tdCells.push(`<td>${escHtml(notes.join('; '))}</td>`);
     return `<tr>${tdCells.join('')}</tr>`;
   }).filter(Boolean);
@@ -290,7 +306,7 @@ function formatXls(messages, cfg) {
 </x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
 </head><body><table border="1">${header}${dataRows.join('\n')}</table></body></html>`;
 
-  return { html, total, remaining };
+  return { html, total, remaining, cleanedCells: totalCleanedCells, excludedLines: totalExcludedLines, tooShortRows: totalTooShort };
 }
 
 // ── prepareExport: format but don't download ───────────────────────────────────
@@ -302,8 +318,8 @@ function prepareExport(messages, format, cfg) {
     return { content: formatHtml(messages, cfg), mime: 'text/html;charset=utf-8', ext: '.html', total: messages.length, remaining: messages.length };
   }
   if (format === 'xls') {
-    const { html, total, remaining } = formatXls(messages, cfg);
-    return { content: html, mime: 'application/vnd.ms-excel;charset=utf-8', ext: '.xls', total, remaining };
+    const { html, total, remaining, cleanedCells, excludedLines, tooShortRows } = formatXls(messages, cfg);
+    return { content: html, mime: 'application/vnd.ms-excel;charset=utf-8', ext: '.xls', total, remaining, cleanedCells, excludedLines, tooShortRows };
   }
   if (format === 'clipboard') {
     return { content: formatTxt(messages, cfg), mime: '', ext: '' };
@@ -491,13 +507,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           } else {
             const fname = resolveFilename(cfg.exportFilename, result) + result.ext;
             sendResponse({
-              ok:        true,
-              count:     msgs.length,
-              content:   result.content,
-              filename:  fname,
-              mime:      result.mime,
-              total:     result.total,
-              remaining: result.remaining,
+              ok:           true,
+              count:        msgs.length,
+              content:      result.content,
+              filename:     fname,
+              mime:         result.mime,
+              total:        result.total,
+              remaining:    result.remaining,
+              cleanedCells: result.cleanedCells,
+              excludedLines: result.excludedLines,
+              tooShortRows: result.tooShortRows,
+              url:          location.href,
+              title:        document.title,
             });
           }
           break;

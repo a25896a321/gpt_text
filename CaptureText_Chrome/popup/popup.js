@@ -16,26 +16,32 @@ const CFG_DEFAULTS = {
   scrollDelay:            350,
   defaultSelection:       'assistant',
   exportFormat:           'xls',
-  exportFilename:         '',            // supports $D $T $Ts $M $K tokens
+  exportFilename:         '$D$T-$M-$K',  // supports $D $T $Ts $M $K tokens
   downloadSubfolder:      '',
   exportRole:             false,
   // XLS: first-column extraction
   xlsPrefix:              '|標題：',
   xlsSuffix:              '|',
   xlsSuffixNewline:       true,
-  xlsPrefixTrimSpaces:    false,        // allow spaces between prefix/suffix chars
+  xlsPrefixTrimSpaces:    true,         // allow spaces between prefix/suffix chars
+  // XLS: column headers (comma-separated)
+  xlsColNames:            '標題,內容',
   // XLS: remove exact substrings
   xlsCleanTargets:        '標題：',
   // XLS: remove lines containing keywords (newline-separated)
   xlsExcludeLines:        XLS_EXCLUDE_DEFAULT,
   // XLS: minimum cell chars
-  xlsMinCellCharsEnabled: false,
+  xlsMinCellCharsEnabled: true,
   xlsMinCellChars:        300,
   // XLS: anomaly marker column
   xlsKeepAnomalyMarker:   false,
   showIndex:              false,
   autoExport:             true,
   alwaysOnTop:            true,
+  // Log settings
+  logAutoExport:          false,
+  logDownloadSubfolder:   '',
+  logFilename:            '',
 };
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
@@ -44,7 +50,6 @@ const $ = id => document.getElementById(id);
 const elPageTitle    = $('page-title');
 const elBtnScan      = $('btn-scan');
 const elBtnStop      = $('btn-stop-scan');
-const elBtnSidebar   = $('btn-sidebar');
 const elProgressWrap = $('scan-progress-wrap');
 const elProgressBar  = $('scan-progress-bar');
 const elScanStatus   = $('scan-status');
@@ -109,6 +114,7 @@ function buildConfig() {
     xlsCleanTargets:        cfg.xlsCleanTargets.split(',').map(s => s.trim()).filter(Boolean),
     xlsExcludeLines:        cfg.xlsExcludeLines.split('\n').map(s => s.trim()).filter(Boolean),
     xlsPrefixTrimSpaces:    cfg.xlsPrefixTrimSpaces === true,
+    xlsColNames:            cfg.xlsColNames ? cfg.xlsColNames.split(',').map(s => s.trim()) : ['標題', '內容'],
     xlsMinCellCharsEnabled: cfg.xlsMinCellCharsEnabled === true,
     xlsMinCellChars:        Number(cfg.xlsMinCellChars) || 300,
     xlsKeepAnomalyMarker:   cfg.xlsKeepAnomalyMarker === true,
@@ -119,12 +125,64 @@ function buildConfig() {
 
 // ── Log system ────────────────────────────────────────────────────────────────
 let logs = [];
+const expandedLogs = new Set();
+
+function getLogSummary(l) {
+  switch (l.type) {
+    case 'scan':   return `🔍 掃描完成 · 找到 ${l.count} 則訊息`;
+    case 'export': {
+      let s = `💾 匯出 ${(l.format || '').toUpperCase()} · ${l.count} 則`;
+      if (l.total != null) s += ` （原始 ${l.total}，處理後 ${l.remaining}）`;
+      return s;
+    }
+    case 'batch':  return `🔗 批量 · 第 ${l.page}/${l.total} 頁 · ${l.count} 則`;
+    case 'error':  return `⚠ 錯誤：${l.message}`;
+    case 'config': return `⚙ ${l.message}`;
+    default:       return JSON.stringify(l).slice(0, 100);
+  }
+}
+
+function getLogDetails(l) {
+  const lines = [];
+  if (l.url)   lines.push(`頁面：${l.title || ''}\n      ${l.url}`);
+  switch (l.type) {
+    case 'scan':
+      lines.push(`找到訊息：${l.count} 則`);
+      if (l.roles) lines.push(`角色分布：${l.roles}`);
+      break;
+    case 'export':
+      lines.push(`格式：${(l.format || '').toUpperCase()}`);
+      if (l.filename) lines.push(`檔案：${l.filename}`);
+      lines.push(`匯出筆數：${l.count}`);
+      if (l.total != null) {
+        lines.push(`原始筆數：${l.total}`);
+        lines.push(`處理後筆數：${l.remaining}`);
+      }
+      if (l.cleanedCells  != null) lines.push(`清除字串儲存格：${l.cleanedCells} 個`);
+      if (l.excludedLines != null) lines.push(`排除關鍵字行：${l.excludedLines} 行`);
+      if (l.tooShortRows  != null) lines.push(`字數不足刪除：${l.tooShortRows} 筆`);
+      break;
+    case 'batch':
+      lines.push(`頁數：第 ${l.page} / ${l.total} 頁`);
+      lines.push(`匯出筆數：${l.count}`);
+      break;
+    case 'error':
+      lines.push(`錯誤內容：${l.message}`);
+      break;
+  }
+  return lines.join('\n');
+}
 
 function addLog(entry) {
   const d  = new Date();
   const ts = `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
   logs.unshift({ ts, ...entry });
   if (logs.length > 500) logs.pop();
+  // Shift expanded indices because new item at 0
+  const newExpanded = new Set();
+  expandedLogs.forEach(i => newExpanded.add(i + 1));
+  expandedLogs.clear();
+  newExpanded.forEach(i => expandedLogs.add(i));
   renderLogList();
 }
 
@@ -135,50 +193,82 @@ function renderLogList() {
     el.innerHTML = '<div class="empty-hint">尚無日誌記錄</div>';
     return;
   }
-  el.innerHTML = logs.map(l => {
-    let detail = '';
-    switch (l.type) {
-      case 'scan':
-        detail = `掃描完成 · 找到 ${l.count} 則`; break;
-      case 'export': {
-        detail = `匯出 ${(l.format || '').toUpperCase()} · ${l.count} 則`;
-        if (l.total != null) detail += ` （原始 ${l.total} 筆，處理後 ${l.remaining} 筆）`;
-        break;
-      }
-      case 'batch':
-        detail = `批量 · 第 ${l.page}/${l.total} 頁 · ${l.count} 則`; break;
-      case 'error':
-        detail = `⚠ 錯誤：${l.message}`; break;
-      default:
-        detail = JSON.stringify(l).slice(0, 120);
-    }
-    const cls = l.type === 'error' ? ' log-error' : '';
-    return `<div class="log-item${cls}">
-      <span class="log-ts">${escHtml(l.ts)}</span>
-      <span class="log-detail">${escHtml(detail)}</span>
+  el.innerHTML = logs.map((l, i) => {
+    const isExp   = expandedLogs.has(i);
+    const summary = escHtml(getLogSummary(l));
+    const details = escHtml(getLogDetails(l));
+    const errCls  = l.type === 'error' ? ' log-error' : '';
+    return `<div class="log-item${errCls}${isExp ? ' expanded' : ''}" data-idx="${i}">
+      <div class="log-summary">
+        <span class="log-toggle">${isExp ? '▼' : '▶'}</span>
+        <span class="log-ts">${escHtml(l.ts)}</span>
+        <span class="log-detail">${summary}</span>
+      </div>
+      <pre class="log-body">${details}</pre>
     </div>`;
   }).join('');
+
+  el.querySelectorAll('.log-item').forEach(item => {
+    item.querySelector('.log-summary').addEventListener('click', () => {
+      const idx = Number(item.dataset.idx);
+      if (expandedLogs.has(idx)) expandedLogs.delete(idx);
+      else expandedLogs.add(idx);
+      renderLogList();
+    });
+  });
+}
+
+// ── Log export ────────────────────────────────────────────────────────────────
+async function doExportLog() {
+  if (!logs.length) { setFooter('無日誌可匯出'); return; }
+  const lines = logs.map(l =>
+    `[${l.ts}] ${getLogSummary(l)}\n${getLogDetails(l)}`
+  ).join('\n\n---\n');
+
+  const d   = new Date();
+  const D   = `${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}`;
+  const T   = `${pad2(d.getHours())}${pad2(d.getMinutes())}`;
+  const Ts  = T + pad2(d.getSeconds());
+  const base = (cfg.logFilename?.trim() || cfg.exportFilename?.trim() || '$D$T')
+    .replace(/\$Ts/g, Ts).replace(/\$T/g, T).replace(/\$D/g, D)
+    .replace(/\$M/g, '').replace(/\$K/g, '');
+  const safe = ('log-' + base).replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) + '.txt';
+  const subf = (cfg.logDownloadSubfolder || cfg.downloadSubfolder || '').trim().replace(/\/+$/, '');
+  const fullName = subf ? `${subf}/${safe}` : safe;
+
+  const blob = new Blob([lines], { type: 'text/plain;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  try {
+    await chrome.downloads.download({ url, filename: fullName, saveAs: false });
+  } catch {
+    const a = Object.assign(document.createElement('a'), { href: url, download: fullName });
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  setFooter('日誌已匯出：' + safe);
+}
+
+async function maybeAutoExportLog() {
+  if (cfg.logAutoExport) await doExportLog();
 }
 
 $('btn-clear-log').addEventListener('click', () => {
   logs = [];
+  expandedLogs.clear();
   renderLogList();
   setFooter('日誌已清除');
 });
 
-$('btn-export-log').addEventListener('click', () => {
-  if (!logs.length) { setFooter('無日誌可匯出'); return; }
-  const lines = logs.map(l => `[${l.ts}] [${l.type}] ${JSON.stringify(l)}`).join('\n');
-  const blob  = new Blob([lines], { type: 'text/plain;charset=utf-8' });
-  const url   = URL.createObjectURL(blob);
-  const d     = new Date();
-  const fname = `gct_log_${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}.txt`;
-  const a     = Object.assign(document.createElement('a'), { href: url, download: fname });
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-  setFooter('日誌已匯出：' + fname);
+$('btn-export-log').addEventListener('click', () => doExportLog());
+
+$('btn-save-log-cfg').addEventListener('click', async () => {
+  cfg.logAutoExport        = $('cfg-logAutoExport').checked;
+  cfg.logDownloadSubfolder = $('cfg-logDownloadSubfolder').value.trim();
+  cfg.logFilename          = $('cfg-logFilename').value.trim();
+  const stored = await chrome.storage.sync.get('gct_cfg').catch(() => ({}));
+  const saved  = { ...(stored.gct_cfg || {}), logAutoExport: cfg.logAutoExport, logDownloadSubfolder: cfg.logDownloadSubfolder, logFilename: cfg.logFilename };
+  await chrome.storage.sync.set({ gct_cfg: saved }).catch(() => {});
+  setFooter('日誌設定已儲存');
 });
 
 // ── doExport: popup handles download (supports downloadSubfolder) ─────────────
@@ -188,7 +278,8 @@ async function doExport(format) {
 
   if (format === 'clipboard') {
     setFooter(`已複製至剪貼簿（${res.count} 則）`);
-    addLog({ type: 'export', format, count: res.count });
+    addLog({ type: 'export', format, count: res.count, url: res.url, title: res.title });
+    await maybeAutoExportLog();
     return;
   }
 
@@ -210,9 +301,22 @@ async function doExport(format) {
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 
   const stats = (format === 'xls' && res.total != null)
-    ? ` （原始 ${res.total} 筆，處理後 ${res.remaining} 筆）` : '';
+    ? ` （原始 ${res.total}，處理後 ${res.remaining}）` : '';
   setFooter(`已匯出 ${res.count} 則（${format.toUpperCase()}）${stats}`);
-  addLog({ type: 'export', format, count: res.count, total: res.total, remaining: res.remaining });
+  addLog({
+    type:          'export',
+    format,
+    count:         res.count,
+    filename:      res.filename,
+    total:         res.total,
+    remaining:     res.remaining,
+    cleanedCells:  res.cleanedCells,
+    excludedLines: res.excludedLines,
+    tooShortRows:  res.tooShortRows,
+    url:           res.url,
+    title:         res.title,
+  });
+  await maybeAutoExportLog();
 }
 
 // ── Role-aware UI refresh ─────────────────────────────────────────────────────
@@ -282,14 +386,17 @@ async function resolveTargetTab() {
 // ── Refresh tab info button ───────────────────────────────────────────────────
 $('btn-refresh-tab').addEventListener('click', async () => {
   try {
-    // Always query the last focused normal window so pinned mode also works
     const [tab] = await chrome.tabs.query({ active: true, windowType: 'normal', lastFocusedWindow: true });
     if (tab) {
       currentTabId = tab.id;
       elPageTitle.textContent = tab.title || '未知頁面';
       elPageTitle.title       = tab.url   || '';
       if (IS_PINNED) await chrome.storage.session.set({ gct_target_tab: tab.id }).catch(() => {});
-      setFooter('頁面資訊已更新：' + (tab.title || tab.url));
+      // Re-inject content script to reset capture state
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/content.js'] });
+      } catch {}
+      setFooter('頁面已重新整理：' + (tab.title || tab.url));
     } else {
       setFooter('無法取得頁面資訊');
     }
@@ -466,7 +573,6 @@ function scanFinished() {
   elProgressBar.style.width = '100%';
   elScanStatus.textContent  = `掃描完成，共 ${summaries.length} 則訊息`;
   setFooter(`找到 ${summaries.length} 則訊息`);
-  elBtnSidebar.disabled = summaries.length === 0;
   renderMsgList();
   addLog({ type: 'scan', count: summaries.length });
 
@@ -490,7 +596,6 @@ async function autoExportCapture() {
 
   await doExport(cfg.exportFormat);
   elExportRow.classList.remove('hidden');
-  elBtnSidebar.disabled = false;
 }
 
 // ── Confirm selection ─────────────────────────────────────────────────────────
@@ -515,12 +620,10 @@ async function toggleSidebar() {
   const res = await sendToContent({ type: 'TOGGLE_SIDEBAR' });
   if (res) {
     const open = res.sidebarOpen;
-    elBtnSidebar.textContent             = open ? '📕' : '📖';
-    $('btn-sidebar-bottom').textContent  = open ? '📕 關閉' : '📖 閱讀';
+    $('btn-sidebar-bottom').textContent = open ? '📕 關閉閱讀模式' : '📖 閱讀模式瀏覽';
     setFooter(open ? '側邊閱讀模式已開啟' : '側邊閱讀模式已關閉');
   }
 }
-elBtnSidebar.addEventListener('click', toggleSidebar);
 $('btn-sidebar-bottom').addEventListener('click', toggleSidebar);
 
 // ── Batch ─────────────────────────────────────────────────────────────────────
@@ -617,17 +720,21 @@ function applySettingsToUI() {
   $('cfg-exportFilename').value        = cfg.exportFilename;
   $('cfg-downloadSubfolder').value     = cfg.downloadSubfolder || '';
   $('cfg-exportRole').checked          = cfg.exportRole === true;
+  $('cfg-xlsColNames').value           = cfg.xlsColNames || '標題,內容';
   $('cfg-xlsPrefix').value             = cfg.xlsPrefix;
   $('cfg-xlsSuffix').value             = cfg.xlsSuffix;
   $('cfg-xlsSuffixNewline').checked    = cfg.xlsSuffixNewline !== false;
-  $('cfg-xlsPrefixTrimSpaces').checked = cfg.xlsPrefixTrimSpaces === true;
+  $('cfg-xlsPrefixTrimSpaces').checked = cfg.xlsPrefixTrimSpaces !== false;
   $('cfg-xlsCleanTargets').value       = cfg.xlsCleanTargets;
   $('cfg-xlsExcludeLines').value       = cfg.xlsExcludeLines;
-  $('cfg-xlsMinCellCharsEnabled').checked = cfg.xlsMinCellCharsEnabled === true;
+  $('cfg-xlsMinCellCharsEnabled').checked = cfg.xlsMinCellCharsEnabled !== false;
   $('cfg-xlsMinCellChars').value       = cfg.xlsMinCellChars;
   $('cfg-xlsKeepAnomalyMarker').checked = cfg.xlsKeepAnomalyMarker === true;
   $('cfg-showIndex').checked           = cfg.showIndex === true;
   $('cfg-autoExport').checked          = cfg.autoExport !== false;
+  $('cfg-logAutoExport').checked       = cfg.logAutoExport === true;
+  $('cfg-logDownloadSubfolder').value  = cfg.logDownloadSubfolder || '';
+  $('cfg-logFilename').value           = cfg.logFilename || '';
   updateRoleUI(cfg.defaultSelection);
   updatePinButton();
 }
@@ -643,6 +750,7 @@ function readSettingsFromUI() {
     exportFilename:         $('cfg-exportFilename').value.trim(),
     downloadSubfolder:      $('cfg-downloadSubfolder').value.trim(),
     exportRole:             $('cfg-exportRole').checked,
+    xlsColNames:            $('cfg-xlsColNames').value.trim() || '標題,內容',
     xlsPrefix:              $('cfg-xlsPrefix').value,
     xlsSuffix:              $('cfg-xlsSuffix').value,
     xlsSuffixNewline:       $('cfg-xlsSuffixNewline').checked,
@@ -654,6 +762,9 @@ function readSettingsFromUI() {
     xlsKeepAnomalyMarker:   $('cfg-xlsKeepAnomalyMarker').checked,
     showIndex:              $('cfg-showIndex').checked,
     autoExport:             $('cfg-autoExport').checked,
+    logAutoExport:          $('cfg-logAutoExport').checked,
+    logDownloadSubfolder:   $('cfg-logDownloadSubfolder').value.trim(),
+    logFilename:            $('cfg-logFilename').value.trim(),
     alwaysOnTop:            cfg.alwaysOnTop,  // preserved from pin button, not a form field
   };
 }

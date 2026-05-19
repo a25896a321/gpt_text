@@ -11,8 +11,7 @@
 <header class="hdr">
   <img src="../icons/CaptureText_icon.png" class="hdr-icon" alt="">
   <span class="hdr-title">文字捕獲工具</span>
-  <span class="hdr-ver">v1.0.2</span>
-  <!-- 📌 acts as always-on-top toggle (dimmed=off, bright=on) -->
+  <span class="hdr-ver">v1.0.5</span>
   <button id="btn-pin-toggle" class="btn-pin" title="置頂：關閉（點擊切換）">📌</button>
   <button id="btn-close-panel" class="hdr-close" title="關閉">✕</button>
 </header>
@@ -33,13 +32,12 @@
   <div class="page-info-row">
     <span class="page-info-lbl">當前讀取的頁面標題</span>
     <span id="page-title" class="page-title" title="">正在讀取頁面…</span>
-    <button id="btn-refresh-tab" class="btn btn-xs btn-ghost" title="重新整理頁面標題">🔄</button>
+    <button id="btn-refresh-tab" class="btn btn-xs btn-ghost" title="重新整理（重新抓取頁面與注入工具）">🔄</button>
   </div>
 
   <div class="row gap-6">
     <button id="btn-scan"      class="btn btn-primary flex-1">🔍 掃描</button>
     <button id="btn-stop-scan" class="btn btn-danger"  disabled>⏹ 停止</button>
-    <button id="btn-sidebar"   class="btn btn-ghost"   disabled title="開啟 / 關閉側邊閱讀模式">📖</button>
   </div>
 
   <div id="scan-progress-wrap" class="progress-wrap hidden">
@@ -68,7 +66,7 @@
     <button class="btn btn-xs btn-export" data-fmt="html">HTML</button>
     <button class="btn btn-xs btn-export" data-fmt="xls">XLS</button>
     <button class="btn btn-xs btn-export" data-fmt="clipboard">📋</button>
-    <button id="btn-sidebar-bottom" class="btn btn-xs btn-ghost">📖 閱讀</button>
+    <button id="btn-sidebar-bottom" class="btn btn-xs btn-ghost">📖 閱讀模式瀏覽</button>
   </div>
 
 </section>
@@ -146,7 +144,7 @@
     <label class="lbl">自訂檔名模板
       <small>（$D=yyyymmdd / $T=hhmm / $Ts=hhmmss / $M=總筆數(XLS) / $K=處理後筆數(XLS)；留空=頁面標題）</small>
     </label>
-    <input id="cfg-exportFilename" class="input" type="text" placeholder="$D$T-$M-$K（留空使用頁面標題）">
+    <input id="cfg-exportFilename" class="input" type="text" placeholder="$D$T-$M-$K">
   </div>
 
   <div class="field">
@@ -157,7 +155,6 @@
   <!-- ── XLS 資料處理 ── -->
   <div class="settings-group-title">XLS 資料處理</div>
 
-  <!-- exportRole above showIndex -->
   <div class="field row gap-8">
     <label class="lbl">匯出角色欄位<small>（關閉後匯出內容不含角色ID）</small></label>
     <input id="cfg-exportRole" type="checkbox">
@@ -168,7 +165,11 @@
     <input id="cfg-showIndex" type="checkbox">
   </div>
 
-  <!-- XLS first-column extraction -->
+  <div class="field">
+    <label class="lbl">XLS 欄位名稱<small>（逗號分隔，依序對應抓取欄位；預設：標題,內容）</small></label>
+    <input id="cfg-xlsColNames" class="input" type="text" placeholder="標題,內容">
+  </div>
+
   <div class="field">
     <label class="lbl">XLS 首欄抓取目標<small>（前綴+後綴包圍的內容獨立為第一欄；全部留空則不分割）</small></label>
     <div class="row gap-4">
@@ -182,14 +183,13 @@
     </div>
     <div class="field row gap-8 mt-2">
       <label class="lbl">匹配前後綴時包括空格<small>（如「|標題：」與「| 標題：」視為相同）</small></label>
-      <input id="cfg-xlsPrefixTrimSpaces" type="checkbox">
+      <input id="cfg-xlsPrefixTrimSpaces" type="checkbox" checked>
     </div>
   </div>
 
-  <!-- Min chars ABOVE clean targets -->
   <div class="field row gap-8">
     <label class="lbl">將 XLS 字數不足的儲存格刪除</label>
-    <input id="cfg-xlsMinCellCharsEnabled" type="checkbox">
+    <input id="cfg-xlsMinCellCharsEnabled" type="checkbox" checked>
   </div>
   <div class="field">
     <label class="lbl">最低字數門檻（字元數）</label>
@@ -197,7 +197,7 @@
   </div>
 
   <div class="field">
-    <label class="lbl">XLS 清除目標（逗號分隔）<br><small>從儲存格內容中移除完美匹配的指定字串</small></label>
+    <label class="lbl">XLS 清除目標（逗號分隔）<br><small>從儲存格內容（含標題欄）中移除完美匹配的指定字串</small></label>
     <input id="cfg-xlsCleanTargets" class="input" type="text" value="標題：">
   </div>
 
@@ -231,6 +231,26 @@
      ══════════════════════════════════════════════════════════════════════════ -->
 <section id="tab-log" class="tab-panel hidden">
 
+  <!-- Log settings -->
+  <div class="settings-group-title">日誌設定</div>
+  <div class="field row gap-8">
+    <label class="lbl">日誌自動匯出<small>（每次操作後自動下載日誌）</small></label>
+    <input id="cfg-logAutoExport" type="checkbox">
+  </div>
+  <div class="field">
+    <label class="lbl">日誌下載子資料夾<small>（留空=使用下載設定路徑）</small></label>
+    <input id="cfg-logDownloadSubfolder" class="input" type="text" placeholder="例：logs">
+  </div>
+  <div class="field">
+    <label class="lbl">日誌檔名模板<small>（留空=跟隨自訂檔名模板，前綴固定加「log-」）</small></label>
+    <input id="cfg-logFilename" class="input" type="text" placeholder="留空=跟隨自訂檔名模板">
+  </div>
+  <div class="row gap-6" style="margin:8px 0">
+    <button id="btn-save-log-cfg" class="btn btn-primary btn-sm flex-1">💾 儲存日誌設定</button>
+  </div>
+
+  <!-- Log list -->
+  <div class="settings-group-title" style="margin-top:10px">日誌記錄</div>
   <div class="row gap-6" style="margin-bottom:8px">
     <button id="btn-clear-log"  class="btn btn-ghost btn-sm flex-1">🗑 清除日誌</button>
     <button id="btn-export-log" class="btn btn-ghost btn-sm flex-1">💾 匯出日誌</button>
